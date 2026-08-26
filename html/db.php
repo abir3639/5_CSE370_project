@@ -1,5 +1,7 @@
 <?php
 
+date_default_timezone_set('Asia/Dhaka');
+
 define('DB_HOST', 'db');
 define('DB_USER', 'root');
 define('DB_PASS', 'rootpassword');
@@ -14,6 +16,7 @@ try {
 
     $pdo->exec("CREATE DATABASE IF NOT EXISTS `" . DB_NAME . "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
     $pdo->exec("USE `" . DB_NAME . "`");
+    $pdo->exec("SET time_zone = '+06:00'");
 
     // Migration Check: If old schema is detected, drop old tables.
     try {
@@ -157,6 +160,7 @@ try {
             `Title` VARCHAR(100) NOT NULL,
             `Message` TEXT NOT NULL,
             `IsRead` TINYINT(1) DEFAULT 0,
+            `Link` VARCHAR(255) NULL,
             `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (`UserID`) REFERENCES `User`(`UserID`) ON DELETE CASCADE ON UPDATE CASCADE
         ) ENGINE=InnoDB",
@@ -169,6 +173,38 @@ try {
             `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (`RideID`) REFERENCES `Ride`(`RideID`) ON DELETE CASCADE ON UPDATE CASCADE,
             FOREIGN KEY (`SenderID`) REFERENCES `User`(`UserID`) ON DELETE CASCADE ON UPDATE CASCADE
+        ) ENGINE=InnoDB",
+
+        "LostItem" => "CREATE TABLE IF NOT EXISTS `LostItem` (
+            `ItemID` INT AUTO_INCREMENT PRIMARY KEY,
+            `ReportType` ENUM('Lost', 'Found') NOT NULL,
+            `ItemName` VARCHAR(150) NOT NULL,
+            `Category` ENUM('Electronics', 'Student ID & Cards', 'Bags & Wallets', 'Keys', 'Clothing & Accessories', 'Books & Documents', 'Other') NOT NULL DEFAULT 'Other',
+            `Description` TEXT NOT NULL,
+            `RideID` INT NULL,
+            `LocationDetails` VARCHAR(255) NOT NULL,
+            `DateLostFound` DATE NOT NULL,
+            `ContactPhone` VARCHAR(50) NULL,
+            `PosterID` INT NOT NULL,
+            `Status` ENUM('Open', 'Claimed', 'Resolved') NOT NULL DEFAULT 'Open',
+            `ResolvedBy` INT NULL,
+            `ResolutionNotes` TEXT NULL,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (`RideID`) REFERENCES `Ride`(`RideID`) ON DELETE SET NULL ON UPDATE CASCADE,
+            FOREIGN KEY (`PosterID`) REFERENCES `User`(`UserID`) ON DELETE CASCADE ON UPDATE CASCADE,
+            FOREIGN KEY (`ResolvedBy`) REFERENCES `User`(`UserID`) ON DELETE SET NULL ON UPDATE CASCADE
+        ) ENGINE=InnoDB",
+
+        "LostItemComment" => "CREATE TABLE IF NOT EXISTS `LostItemComment` (
+            `CommentID` INT AUTO_INCREMENT PRIMARY KEY,
+            `ItemID` INT NOT NULL,
+            `UserID` INT NOT NULL,
+            `Message` TEXT NOT NULL,
+            `IsClaim` TINYINT(1) DEFAULT 0,
+            `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (`ItemID`) REFERENCES `LostItem`(`ItemID`) ON DELETE CASCADE ON UPDATE CASCADE,
+            FOREIGN KEY (`UserID`) REFERENCES `User`(`UserID`) ON DELETE CASCADE ON UPDATE CASCADE
         ) ENGINE=InnoDB"
     ];
 
@@ -179,6 +215,12 @@ try {
     // Auto-migration for existing tables
     try {
         $pdo->exec("ALTER TABLE `Ride` ADD COLUMN `IsWomenOnly` TINYINT(1) DEFAULT 0 AFTER `Notes`");
+    } catch (PDOException $e) {
+        // Column already exists
+    }
+
+    try {
+        $pdo->exec("ALTER TABLE `Notification` ADD COLUMN `Link` VARCHAR(255) NULL AFTER `IsRead`");
     } catch (PDOException $e) {
         // Column already exists
     }

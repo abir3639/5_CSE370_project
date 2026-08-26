@@ -258,9 +258,12 @@ function get_ride_participants($pdo, $rideId) {
                                 </p>
                             </div>
 
-                            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
                                 <a href="ride_details.php?id=<?= $ride['RideID'] ?>" class="btn btn-secondary btn-sm">
                                     Ride Details
+                                </a>
+                                <a href="lost_found.php?ride_id=<?= $ride['RideID'] ?>" class="btn btn-secondary btn-sm" title="Report or check lost items for this ride">
+                                    🔍 Lost & Found
                                 </a>
 
                                 <?php if ($ride['Status'] === 'Completed'): ?>

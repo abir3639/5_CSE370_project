@@ -15,6 +15,44 @@ $action = $_POST['action'] ?? $_GET['action'] ?? '';
 
 switch ($action) {
     // -------------------------------------------------------------------------
+    // 0. OPEN & REDIRECT NOTIFICATION
+    // -------------------------------------------------------------------------
+    case 'open_notif':
+        $notifId = (int)($_GET['id'] ?? 0);
+        $target = 'my_rides.php';
+        if ($notifId > 0 && $currentUserId > 0) {
+            $nStmt = $pdo->prepare("SELECT * FROM `Notification` WHERE `NotificationID` = ? AND `UserID` = ?");
+            $nStmt->execute([$notifId, $currentUserId]);
+            $notif = $nStmt->fetch();
+            
+            $pdo->prepare("UPDATE `Notification` SET `IsRead` = 1 WHERE `NotificationID` = ? AND `UserID` = ?")->execute([$notifId, $currentUserId]);
+            
+            if ($notif && !empty($notif['Link'])) {
+                $target = $notif['Link'];
+            } elseif ($notif) {
+                $type = $notif['Type'];
+                $title = $notif['Title'];
+
+                if ($type === 'chat' || strpos($title, 'Message') !== false) {
+                    $rId = $pdo->query("SELECT RideID FROM `RideParticipant` WHERE UserID = $currentUserId ORDER BY JoinedAt DESC LIMIT 1")->fetchColumn();
+                    $target = $rId ? "chat.php?ride_id=$rId" : "my_rides.php";
+                } elseif ($type === 'request' || strpos($title, 'Request') !== false) {
+                    $rId = $pdo->query("SELECT RideID FROM `Ride` WHERE DriverID = $currentUserId ORDER BY RideDate DESC, DepartureTime DESC LIMIT 1")->fetchColumn();
+                    $target = $rId ? "ride_details.php?id=$rId" : "my_rides.php";
+                } elseif ($type === 'accepted') {
+                    $rId = $pdo->query("SELECT RideID FROM `RideParticipant` WHERE UserID = $currentUserId AND Role = 'Passenger' ORDER BY JoinedAt DESC LIMIT 1")->fetchColumn();
+                    $target = $rId ? "ride_details.php?id=$rId" : "my_rides.php";
+                } elseif (strpos($type, 'lost_found') !== false) {
+                    $target = "lost_found.php";
+                } else {
+                    $target = "my_rides.php";
+                }
+            }
+        }
+        header("Location: " . $target);
+        exit;
+
+    // -------------------------------------------------------------------------
     // 1. REQUEST TO JOIN A RIDE (Passenger)
     // -------------------------------------------------------------------------
     case 'request_join':
@@ -50,6 +88,19 @@ switch ($action) {
             exit;
         }
 
+        // Strict Gender Check for Women-Only Rides
+        if (!empty($ride['IsWomenOnly'])) {
+            $uStmt = $pdo->prepare("SELECT Gender FROM `User` WHERE UserID = ?");
+            $uStmt->execute([$currentUserId]);
+            $userGender = $uStmt->fetchColumn();
+
+            if ($userGender !== 'Female') {
+                $_SESSION['error_msg'] = "🌸 This ride is designated as Women-Only. Only female university members can request to join.";
+                header("Location: ride_details.php?id=$rideId");
+                exit;
+            }
+        }
+
         // Ensure Passenger record exists for this user
         $pdo->prepare("INSERT IGNORE INTO `Passenger` (`UserID`, `PassRating`) VALUES (?, 5.00)")->execute([$currentUserId]);
 
@@ -70,7 +121,7 @@ switch ($action) {
                 
                 // Notify driver
                 $passengerName = $_SESSION['name'] ?? 'A student';
-                create_notification($pdo, $ride['DriverID'], 'request', 'New Join Request', "$passengerName requested to join your ride from {$ride['StartLocation']} to {$ride['Destination']}.");
+                create_notification($pdo, $ride['DriverID'], 'request', 'New Join Request', "$passengerName requested to join your ride from {$ride['StartLocation']} to {$ride['Destination']}.", "ride_details.php?id=$rideId");
                 $_SESSION['success_msg'] = "Join request sent successfully to the driver!";
             }
             header("Location: ride_details.php?id=$rideId");
@@ -83,7 +134,7 @@ switch ($action) {
 
         // Notify Driver
         $passengerName = $_SESSION['name'] ?? 'A student';
-        create_notification($pdo, $ride['DriverID'], 'request', 'New Join Request', "$passengerName requested to join your ride to {$ride['Destination']}.");
+        create_notification($pdo, $ride['DriverID'], 'request', 'New Join Request', "$passengerName requested to join your ride to {$ride['Destination']}.", "ride_details.php?id=$rideId");
 
         $_SESSION['success_msg'] = "Join request sent to the driver!";
         header("Location: ride_details.php?id=$rideId");
@@ -96,7 +147,7 @@ switch ($action) {
         $requestId = (int)($_POST['request_id'] ?? 0);
         
         $stmt = $pdo->prepare("
-            SELECT rr.*, r.DriverID, r.AvailableSeats, r.Status AS RideStatus, r.StartLocation, r.Destination
+            SELECT rr.*, r.DriverID, r.AvailableSeats, r.Status AS RideStatus, r.StartLocation, r.Destination, r.IsWomenOnly
             FROM `RideRequest` rr
             JOIN `Ride` r ON rr.RideID = r.RideID
             WHERE rr.RequestID = ?
@@ -108,6 +159,18 @@ switch ($action) {
             $_SESSION['error_msg'] = "Unauthorized or request not found.";
             header('Location: my_rides.php');
             exit;
+        }
+
+        // Verify Passenger Gender for Women-Only Ride
+        if (!empty($req['IsWomenOnly'])) {
+            $pGenStmt = $pdo->prepare("SELECT Gender FROM `User` WHERE UserID = ?");
+            $pGenStmt->execute([$req['PassengerID']]);
+            $pGender = $pGenStmt->fetchColumn();
+            if ($pGender !== 'Female') {
+                $_SESSION['error_msg'] = "Cannot accept male passengers on a Women-Only carpool.";
+                header('Location: my_rides.php');
+                exit;
+            }
         }
 
         if ((int)$req['AvailableSeats'] <= 0) {
@@ -133,7 +196,7 @@ switch ($action) {
                 ->execute([$newSeats, $newStatus, $req['RideID']]);
 
             // Notify Passenger
-            create_notification($pdo, $req['PassengerID'], 'accepted', 'Request Accepted! 🎉', "Your request to join the ride from {$req['StartLocation']} to {$req['Destination']} has been accepted.");
+            create_notification($pdo, $req['PassengerID'], 'accepted', 'Request Accepted! 🎉', "Your request to join the ride from {$req['StartLocation']} to {$req['Destination']} has been accepted.", "ride_details.php?id=" . $req['RideID']);
 
             $pdo->commit();
             $_SESSION['success_msg'] = "Passenger accepted! Seat count updated.";
@@ -170,7 +233,7 @@ switch ($action) {
             ->execute([$requestId]);
 
         // Notify Passenger
-        create_notification($pdo, $req['PassengerID'], 'rejected', 'Request Update', "Your request to join the ride to {$req['Destination']} was not accepted.");
+        create_notification($pdo, $req['PassengerID'], 'rejected', 'Request Update', "Your request to join the ride to {$req['Destination']} was not accepted.", "index.php");
 
         $_SESSION['success_msg'] = "Request rejected.";
         header('Location: my_rides.php');
@@ -214,7 +277,7 @@ switch ($action) {
             $ride = $rStmt->fetch();
             if ($ride) {
                 $pName = $_SESSION['name'] ?? 'A passenger';
-                create_notification($pdo, $ride['DriverID'], 'leave', 'Passenger Left Ride', "$pName left the ride from {$ride['StartLocation']} to {$ride['Destination']}. Seat reopened.");
+                create_notification($pdo, $ride['DriverID'], 'leave', 'Passenger Left Ride', "$pName left the ride from {$ride['StartLocation']} to {$ride['Destination']}. Seat reopened.", "ride_details.php?id=$rideId");
             }
 
             $pdo->commit();
@@ -259,7 +322,7 @@ switch ($action) {
             $passengers = $partStmt->fetchAll(PDO::FETCH_COLUMN);
 
             foreach ($passengers as $pUid) {
-                create_notification($pdo, $pUid, 'cancelled', 'Ride Cancelled ⚠️', "The ride from {$ride['StartLocation']} to {$ride['Destination']} on {$ride['RideDate']} was cancelled by the driver.");
+                create_notification($pdo, $pUid, 'cancelled', 'Ride Cancelled ⚠️', "The ride from {$ride['StartLocation']} to {$ride['Destination']} on {$ride['RideDate']} was cancelled by the driver.", "index.php");
             }
 
             $pdo->commit();
@@ -314,7 +377,7 @@ switch ($action) {
             $uStmt->execute([$rideId]);
             $uids = $uStmt->fetchAll(PDO::FETCH_COLUMN);
             foreach ($uids as $u) {
-                create_notification($pdo, $u, 'rate_prompt', 'Rate Your Ride ⭐️', "Your ride has ended! Please take a moment to rate your ride partner.");
+                create_notification($pdo, $u, 'rate_prompt', 'Rate Your Ride ⭐️', "Your ride has ended! Please take a moment to rate your ride partner.", "ride_details.php?id=$rideId");
             }
         }
 
@@ -366,7 +429,7 @@ switch ($action) {
 
         // Notify recipient
         $reviewerName = $_SESSION['name'] ?? 'A peer';
-        create_notification($pdo, $recipientId, 'rating', 'New Rating Received ⭐', "$reviewerName gave you a $rating-star rating for your shared ride.");
+        create_notification($pdo, $recipientId, 'rating', 'New Rating Received ⭐', "$reviewerName gave you a $rating-star rating for your shared ride.", "profile.php?id=$recipientId");
 
         $_SESSION['success_msg'] = "Thank you! Your rating has been submitted.";
         header('Location: my_rides.php?tab=completed');
@@ -380,6 +443,225 @@ switch ($action) {
         $_SESSION['success_msg'] = "All notifications marked as read.";
         header('Location: notifications.php');
         exit;
+
+    // -------------------------------------------------------------------------
+    // 10. REPORT LOST OR FOUND ITEM
+    // -------------------------------------------------------------------------
+    case 'report_lost_item':
+        $reportType = in_array($_POST['report_type'] ?? '', ['Lost', 'Found']) ? $_POST['report_type'] : 'Lost';
+        $itemName = trim($_POST['item_name'] ?? '');
+        $category = trim($_POST['category'] ?? 'Other');
+        $description = trim($_POST['description'] ?? '');
+        $locationDetails = trim($_POST['location_details'] ?? '');
+        $dateLostFound = trim($_POST['date_lost_found'] ?? date('Y-m-d'));
+        $contactPhone = trim($_POST['contact_phone'] ?? '');
+        $rideId = (int)($_POST['ride_id'] ?? 0);
+        $rideId = ($rideId > 0) ? $rideId : null;
+
+        $validCategories = ['Electronics', 'Student ID & Cards', 'Bags & Wallets', 'Keys', 'Clothing & Accessories', 'Books & Documents', 'Other'];
+        if (!in_array($category, $validCategories)) {
+            $category = 'Other';
+        }
+
+        if (empty($itemName) || empty($description) || empty($locationDetails)) {
+            $_SESSION['error_msg'] = "Please provide an item name, description, and location.";
+            header('Location: lost_found.php');
+            exit;
+        }
+
+        try {
+            $insStmt = $pdo->prepare("
+                INSERT INTO `LostItem` 
+                (`ReportType`, `ItemName`, `Category`, `Description`, `RideID`, `LocationDetails`, `DateLostFound`, `ContactPhone`, `PosterID`, `Status`, `created_at`) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Open', NOW())
+            ");
+            $insStmt->execute([
+                $reportType,
+                $itemName,
+                $category,
+                $description,
+                $rideId,
+                $locationDetails,
+                $dateLostFound,
+                $contactPhone,
+                $currentUserId
+            ]);
+
+            $newItemId = $pdo->lastInsertId();
+            $posterName = $_SESSION['name'] ?? 'A student';
+
+            // If tied to a specific ride, notify all participants of that ride
+            if ($rideId) {
+                $rStmt = $pdo->prepare("SELECT StartLocation, Destination, DriverID FROM `Ride` WHERE `RideID` = ?");
+                $rStmt->execute([$rideId]);
+                $ride = $rStmt->fetch();
+
+                if ($ride) {
+                    $pStmt = $pdo->prepare("SELECT UserID FROM `RideParticipant` WHERE `RideID` = ? AND `UserID` != ?");
+                    $pStmt->execute([$rideId, $currentUserId]);
+                    $recipients = $pStmt->fetchAll(PDO::FETCH_COLUMN);
+
+                    // Include driver if not already in participants and not current user
+                    if ((int)$ride['DriverID'] !== $currentUserId && !in_array($ride['DriverID'], $recipients)) {
+                        $recipients[] = $ride['DriverID'];
+                    }
+
+                    $tag = ($reportType === 'Found') ? '🟢 Found Item Alert' : '🔴 Lost Item Alert';
+                    foreach ($recipients as $uid) {
+                        create_notification(
+                            $pdo, 
+                            $uid, 
+                            'lost_found', 
+                            "$tag: $itemName", 
+                            "$posterName reported a $reportType item on your shared ride ({$ride['StartLocation']} → {$ride['Destination']}). Check Lost & Found to coordinate return.",
+                            "lost_found.php?item_id=$newItemId"
+                        );
+                    }
+                }
+            }
+
+            $_SESSION['success_msg'] = ($reportType === 'Found' ? "Found item report published successfully!" : "Lost item report posted. We hope you recover it soon!");
+            header("Location: lost_found.php?item_id=$newItemId");
+            exit;
+        } catch (PDOException $e) {
+            $_SESSION['error_msg'] = "Failed to report item: " . $e->getMessage();
+            header('Location: lost_found.php');
+            exit;
+        }
+
+    // -------------------------------------------------------------------------
+    // 11. CLAIM LOST / FOUND ITEM OR POST INQUIRY COMMENT
+    // -------------------------------------------------------------------------
+    case 'add_lost_comment':
+        $itemId = (int)($_POST['item_id'] ?? 0);
+        $message = trim($_POST['message'] ?? '');
+        $isClaim = isset($_POST['is_claim']) && (int)$_POST['is_claim'] === 1 ? 1 : 0;
+
+        if ($itemId <= 0 || empty($message)) {
+            $_SESSION['error_msg'] = "Please provide a message or claim details.";
+            header("Location: lost_found.php");
+            exit;
+        }
+
+        // Fetch item details
+        $itemStmt = $pdo->prepare("SELECT * FROM `LostItem` WHERE `ItemID` = ?");
+        $itemStmt->execute([$itemId]);
+        $item = $itemStmt->fetch();
+
+        if (!$item) {
+            $_SESSION['error_msg'] = "Item report not found.";
+            header("Location: lost_found.php");
+            exit;
+        }
+
+        try {
+            $cStmt = $pdo->prepare("INSERT INTO `LostItemComment` (`ItemID`, `UserID`, `Message`, `IsClaim`, `created_at`) VALUES (?, ?, ?, ?, NOW())");
+            $cStmt->execute([$itemId, $currentUserId, $message, $isClaim]);
+
+            // If isClaim and item is open, update status to Claimed
+            if ($isClaim && $item['Status'] === 'Open') {
+                $pdo->prepare("UPDATE `LostItem` SET `Status` = 'Claimed' WHERE `ItemID` = ?")->execute([$itemId]);
+            }
+
+            // Notify item poster
+            if ((int)$item['PosterID'] !== $currentUserId) {
+                $senderName = $_SESSION['name'] ?? 'A member';
+                $title = $isClaim ? "📦 Item Claim Request: {$item['ItemName']}" : "💬 New Comment on {$item['ItemName']}";
+                $notifMsg = $isClaim 
+                    ? "$senderName has submitted an ownership claim for '{$item['ItemName']}': \"$message\""
+                    : "$senderName commented on your report for '{$item['ItemName']}': \"$message\"";
+
+                create_notification($pdo, $item['PosterID'], 'lost_found_comment', $title, $notifMsg, "lost_found.php?item_id=$itemId#discussion");
+            }
+
+            $_SESSION['success_msg'] = $isClaim ? "Claim request sent to the reporter!" : "Message posted.";
+            header("Location: lost_found.php?item_id=$itemId#discussion");
+            exit;
+        } catch (PDOException $e) {
+            $_SESSION['error_msg'] = "Failed to post message: " . $e->getMessage();
+            header("Location: lost_found.php?item_id=$itemId");
+            exit;
+        }
+
+    // -------------------------------------------------------------------------
+    // 12. RESOLVE / MARK AS RETURNED (Poster or Admin)
+    // -------------------------------------------------------------------------
+    case 'resolve_lost_item':
+        $itemId = (int)($_POST['item_id'] ?? 0);
+        $resolvedById = (int)($_POST['resolved_by_user_id'] ?? 0);
+        $notes = trim($_POST['resolution_notes'] ?? 'Returned / Recovered');
+
+        $itemStmt = $pdo->prepare("SELECT * FROM `LostItem` WHERE `ItemID` = ?");
+        $itemStmt->execute([$itemId]);
+        $item = $itemStmt->fetch();
+
+        $userRole = $_SESSION['user_type'] ?? 'Passenger';
+        $isAdmin = ($userRole === 'Admin');
+
+        if (!$item || ((int)$item['PosterID'] !== $currentUserId && !$isAdmin)) {
+            $_SESSION['error_msg'] = "Unauthorized to resolve this item.";
+            header("Location: lost_found.php");
+            exit;
+        }
+
+        try {
+            $resUser = ($resolvedById > 0) ? $resolvedById : $currentUserId;
+            $pdo->prepare("
+                UPDATE `LostItem` 
+                SET `Status` = 'Resolved', `ResolvedBy` = ?, `ResolutionNotes` = ?, `updated_at` = NOW() 
+                WHERE `ItemID` = ?
+            ")->execute([$resUser, $notes, $itemId]);
+
+            // Notify claimant if resolved with another user
+            if ($resolvedById > 0 && $resolvedById !== $currentUserId) {
+                create_notification(
+                    $pdo, 
+                    $resolvedById, 
+                    'lost_found_resolved', 
+                    "🎉 Item Marked Resolved: {$item['ItemName']}", 
+                    "The report for '{$item['ItemName']}' has been marked as resolved and safely returned!",
+                    "lost_found.php?item_id=$itemId"
+                );
+            }
+
+            $_SESSION['success_msg'] = "Item successfully marked as Resolved & Returned!";
+            header("Location: lost_found.php?item_id=$itemId");
+            exit;
+        } catch (PDOException $e) {
+            $_SESSION['error_msg'] = "Error updating status: " . $e->getMessage();
+            header("Location: lost_found.php?item_id=$itemId");
+            exit;
+        }
+
+    // -------------------------------------------------------------------------
+    // 13. DELETE LOST & FOUND REPORT
+    // -------------------------------------------------------------------------
+    case 'delete_lost_item':
+        $itemId = (int)($_POST['item_id'] ?? 0);
+
+        $itemStmt = $pdo->prepare("SELECT * FROM `LostItem` WHERE `ItemID` = ?");
+        $itemStmt->execute([$itemId]);
+        $item = $itemStmt->fetch();
+
+        $userRole = $_SESSION['user_type'] ?? 'Passenger';
+        $isAdmin = ($userRole === 'Admin');
+
+        if (!$item || ((int)$item['PosterID'] !== $currentUserId && !$isAdmin)) {
+            $_SESSION['error_msg'] = "Unauthorized to delete this report.";
+            header("Location: lost_found.php");
+            exit;
+        }
+
+        try {
+            $pdo->prepare("DELETE FROM `LostItem` WHERE `ItemID` = ?")->execute([$itemId]);
+            $_SESSION['success_msg'] = "Report removed successfully.";
+            header("Location: lost_found.php");
+            exit;
+        } catch (PDOException $e) {
+            $_SESSION['error_msg'] = "Error deleting report: " . $e->getMessage();
+            header("Location: lost_found.php");
+            exit;
+        }
 
     default:
         $_SESSION['error_msg'] = "Invalid action specified.";

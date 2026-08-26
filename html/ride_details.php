@@ -39,6 +39,13 @@ if (!$ride) {
 
 $isDriver = ($currentUserId && (int)$ride['DriverID'] === (int)$currentUserId);
 
+$currentUserGender = null;
+if ($isLoggedIn) {
+    $genStmt = $pdo->prepare("SELECT Gender FROM `User` WHERE UserID = ?");
+    $genStmt->execute([$currentUserId]);
+    $currentUserGender = $genStmt->fetchColumn();
+}
+
 // Fetch Driver Phone if user is driver or confirmed passenger
 $driverPhone = null;
 $phoneStmt = $pdo->prepare("SELECT Phone FROM `User_Phone` WHERE UserID = ? LIMIT 1");
@@ -354,6 +361,16 @@ $destLng = $ride['DestinationLongitude'] ?? 90.4265;
                             </div>
                         <?php endif; ?>
 
+                        <?php if (!empty($ride['IsWomenOnly'])): ?>
+                            <div style="background: #fdf2f8; border: 1.5px solid #fbcfe8; padding: 0.85rem 1rem; border-radius: 8px; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.6rem; color: #9d174d;">
+                                <span style="font-size: 1.3rem;">🌸</span>
+                                <div>
+                                    <strong style="font-size: 0.92rem;">Women-Only Carpool</strong>
+                                    <p style="font-size: 0.8rem; margin: 0.15rem 0 0 0; color: #be185d;">Exclusively for verified female BRAC University students and faculty.</p>
+                                </div>
+                            </div>
+                        <?php endif; ?>
+
                         <?php if (!$isLoggedIn): ?>
                             <a href="login.php" class="btn btn-primary">Log In to Join Ride</a>
                         <?php elseif ($isDriver): ?>
@@ -381,6 +398,11 @@ $destLng = $ride['DestinationLongitude'] ?? 90.4265;
                                     ⏳ Request Pending · Cancel Request
                                 </button>
                             </form>
+                        <?php elseif (!empty($ride['IsWomenOnly']) && $currentUserGender !== 'Female'): ?>
+                            <div style="background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 0.75rem; border-radius: 8px; font-size: 0.85rem; font-weight: 700; text-align: center;">
+                                🚫 Male passengers cannot join Women-Only carpools.
+                            </div>
+                            <button class="btn btn-secondary" disabled style="opacity: 0.5; cursor: not-allowed;">🌸 Restricted (Women-Only)</button>
                         <?php elseif ($ride['Status'] === 'Open' && (int)$ride['AvailableSeats'] > 0): ?>
                             <form method="POST" action="api_actions.php">
                                 <input type="hidden" name="action" value="request_join">
@@ -397,6 +419,12 @@ $destLng = $ride['DestinationLongitude'] ?? 90.4265;
                         <?php if ($ride['Status'] === 'Completed' && ($isDriver || $isAcceptedPassenger)): ?>
                             <a href="rate.php?ride_id=<?= $ride['RideID'] ?>" class="btn btn-accent">
                                 <?= $hasRated ? '⭐️ View / Update Rating' : '⭐️ Rate Your Ride Partner' ?>
+                            </a>
+                        <?php endif; ?>
+
+                        <?php if ($isDriver || $isAcceptedPassenger): ?>
+                            <a href="lost_found.php?ride_id=<?= $ride['RideID'] ?>" class="btn btn-secondary" style="font-size: 0.85rem; padding: 0.6rem; text-align: center; text-decoration: none;">
+                                🔍 Lost / Found Something on this Ride?
                             </a>
                         <?php endif; ?>
                     </div>

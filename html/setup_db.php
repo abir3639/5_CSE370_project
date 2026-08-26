@@ -7,21 +7,21 @@ $sampleDataAdded = false;
 
 if (isset($_POST['insert_seed_data'])) {
     try {
-        $pdo->beginTransaction();
-
-        // Safe truncation
+        // Safe truncation outside of transaction because DDL implicitly commits
         $pdo->exec("SET FOREIGN_KEY_CHECKS = 0");
-        $tablesToTruncate = ['Notification', 'Rating', 'RideParticipant', 'RideRequest', 'Ride', 'FavoriteLocation', 'Vehicle', 'Driver', 'Passenger', 'User_Phone', 'User', 'Admin'];
+        $tablesToTruncate = ['LostItemComment', 'LostItem', 'RideMessage', 'Notification', 'Rating', 'RideParticipant', 'RideRequest', 'Ride', 'FavoriteLocation', 'Vehicle', 'Driver', 'Passenger', 'User_Phone', 'User', 'Admin'];
         foreach ($tablesToTruncate as $tbl) {
             $pdo->exec("TRUNCATE TABLE `$tbl`");
         }
         $pdo->exec("SET FOREIGN_KEY_CHECKS = 1");
 
+        $pdo->beginTransaction();
+
         $pdo->exec("INSERT IGNORE INTO `Admin` (`AdminID`, `Email`, `Role`) VALUES (1, 'admin@rideshare.com', 'SuperAdmin')");
 
         $defaultPassword = password_hash('password123', PASSWORD_DEFAULT);
         
-        $pdo->prepare("INSERT INTO `User` (`Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`, `AdminID`, `UniversityVerified`) VALUES ('Admin User', 'admin@rideshare.com', ?, 'Other', 30, 'Admin', 1, 0)")
+        $pdo->prepare("INSERT INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`, `AdminID`, `UniversityVerified`) VALUES (5, 'Admin User', 'admin@rideshare.com', ?, 'Other', 30, 'Admin', 1, 0)")
             ->execute([$defaultPassword]);
 
         $users = [
@@ -133,11 +133,62 @@ if (isset($_POST['insert_seed_data'])) {
         $notifStmt->execute([1, 7, 'request', 'New Join Request 📬', 'Alice Johnson has requested to join your ride from Mirpur 10 to BRAC University.', 0]);
         $notifStmt->execute([2, 6, 'accepted', 'Request Accepted! 🎉', 'Karim Islam accepted your ride request for yesterday commute.', 1]);
 
+        // Lost & Found Seed Items
+        $lostStmt = $pdo->prepare("INSERT INTO `LostItem` (`ItemID`, `ReportType`, `ItemName`, `Category`, `Description`, `RideID`, `LocationDetails`, `DateLostFound`, `ContactPhone`, `PosterID`, `Status`, `created_at`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())");
+        $lostStmt->execute([
+            1, 
+            'Lost', 
+            'Apple AirPods Pro (2nd Gen) with Spigen Blue Case', 
+            'Electronics', 
+            'I believe I left my AirPods case on the back seat of Karim\'s Toyota Axio during our yesterday evening commute from BRACU to Mirpur 10.', 
+            6, 
+            'Rear left passenger seat / car door pocket', 
+            $yesterday, 
+            '+880-1711-223344', 
+            6, // Rahim Ahmed
+            'Open'
+        ]);
+
+        $lostStmt->execute([
+            2, 
+            'Found', 
+            'BRAC University Student ID Card (Nusrat)', 
+            'Student ID & Cards', 
+            'Found a student ID card with BRACU lanyard on the passenger seat floor after drop-off at Merul Badda main gate.', 
+            6, 
+            'Front passenger seat floor', 
+            $yesterday, 
+            '+880-1811-556677', 
+            7, // Karim Islam (Driver)
+            'Open'
+        ]);
+
+        $lostStmt->execute([
+            3, 
+            'Lost', 
+            'Black Scientific Calculator (Casio fx-991EX)', 
+            'Electronics', 
+            'Left inside a clear folder during morning drop-off near UB building entrance.', 
+            NULL, 
+            'BRACU New Campus UB Gate Drop-off Area', 
+            $today, 
+            '+880-1611-334455', 
+            9, // Nusrat Jahan
+            'Open'
+        ]);
+
+        // Lost Item Comments / Inquiries
+        $lostComm = $pdo->prepare("INSERT INTO `LostItemComment` (`CommentID`, `ItemID`, `UserID`, `Message`, `IsClaim`, `created_at`) VALUES (?, ?, ?, ?, ?, NOW())");
+        $lostComm->execute([1, 1, 7, 'Hey Rahim, I checked the car this morning and found your AirPods under the rear seat mat! I will bring them on tomorrow morning ride.', 0]);
+        $lostComm->execute([2, 2, 9, 'Hi Karim! That is my ID card! I was searching all over campus for it.', 1]);
+
         $pdo->commit();
-        $message = "Sample seed data reloaded successfully! Dhaka routes, reverse directions, and ratings populated.";
+        $message = "Sample seed data reloaded successfully! Dhaka routes, reverse directions, ratings, and Lost & Found items populated.";
         $sampleDataAdded = true;
     } catch (Exception $e) {
-        $pdo->rollBack();
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         $message = "Error inserting sample data: " . $e->getMessage();
     }
 }
@@ -146,7 +197,8 @@ $tableStats = [];
 $tableNames = [
     'Admin', 'User', 'User_Phone', 'Passenger', 'Driver', 
     'Vehicle', 'FavoriteLocation', 'Ride', 'RideRequest', 
-    'RideParticipant', 'Rating', 'Notification'
+    'RideParticipant', 'RideMessage', 'Rating', 'Notification',
+    'LostItem', 'LostItemComment'
 ];
 
 foreach ($tableNames as $tbl) {

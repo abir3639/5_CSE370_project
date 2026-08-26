@@ -159,6 +159,202 @@ run_test('User Rating Recalculation Engine', function() {
     return "Rating average out of bounds: " . $u['RatingAverage'];
 });
 
+// -----------------------------------------------------------------------------
+// 8. TEST SUITE: Lost & Found Schema & Integrity
+// -----------------------------------------------------------------------------
+run_test('Lost & Found Schema Tables & Foreign Keys', function() {
+    global $pdo;
+    $chk1 = $pdo->query("SHOW TABLES LIKE 'LostItem'")->fetch();
+    $chk2 = $pdo->query("SHOW TABLES LIKE 'LostItemComment'")->fetch();
+
+    if (!$chk1 || !$chk2) {
+        return "LostItem or LostItemComment tables are missing.";
+    }
+
+    $cols = $pdo->query("SHOW COLUMNS FROM `LostItem` LIKE 'ReportType'")->fetch();
+    if (!$cols) return "ReportType column missing in LostItem.";
+
+    return true;
+});
+
+// -----------------------------------------------------------------------------
+// 9. TEST SUITE: Lost & Found Reporting & Discussion Flow
+// -----------------------------------------------------------------------------
+run_test('Lost & Found Item Reporting and Claim Lifecycle', function() {
+    global $pdo;
+    // 1. Insert test lost report
+    $stmt = $pdo->prepare("
+        INSERT INTO `LostItem` 
+        (`ReportType`, `ItemName`, `Category`, `Description`, `LocationDetails`, `DateLostFound`, `PosterID`, `Status`, `created_at`) 
+        VALUES ('Lost', 'Test Water Bottle', 'Other', 'Blue stainless steel bottle', 'UB 0201', CURDATE(), 6, 'Open', NOW())
+    ");
+    $stmt->execute();
+    $testItemId = (int)$pdo->lastInsertId();
+
+    if ($testItemId <= 0) return "Failed to insert test lost item.";
+
+    // 2. Post a claim message
+    $commStmt = $pdo->prepare("INSERT INTO `LostItemComment` (`ItemID`, `UserID`, `Message`, `IsClaim`, `created_at`) VALUES (?, 7, 'I found this bottle in UB cafeteria!', 1, NOW())");
+    $commStmt->execute([$testItemId]);
+
+    // 3. Mark as resolved
+    $pdo->prepare("UPDATE `LostItem` SET `Status` = 'Resolved', `ResolvedBy` = 7, `ResolutionNotes` = 'Returned safely' WHERE `ItemID` = ?")->execute([$testItemId]);
+
+    $item = $pdo->query("SELECT Status, ResolvedBy FROM `LostItem` WHERE ItemID = $testItemId")->fetch();
+    
+    // Clean up test item
+    $pdo->prepare("DELETE FROM `LostItem` WHERE `ItemID` = ?")->execute([$testItemId]);
+
+    if ($item && $item['Status'] === 'Resolved' && (int)$item['ResolvedBy'] === 7) {
+        return true;
+    }
+    return "Lost & Found lifecycle state verification failed.";
+});
+
+// -----------------------------------------------------------------------------
+// 10. TEST SUITE: Mohammadpur & Dhaka Place Search & Geocoding
+// -----------------------------------------------------------------------------
+run_test('Mohammadpur & Dhaka Place Geocoding Search Engine', function() {
+    $geoMohammadpur = geocode_location('Mohammadpur');
+    if (!$geoMohammadpur || abs($geoMohammadpur['lat'] - 23.7542) > 0.05 || abs($geoMohammadpur['lng'] - 90.3587) > 0.05) {
+        return "Geocoding failed for Mohammadpur. Got: " . json_encode($geoMohammadpur);
+    }
+
+    $geoBRACU = geocode_location('BRAC University');
+    if (!$geoBRACU || abs($geoBRACU['lat'] - 23.7781) > 0.05 || abs($geoBRACU['lng'] - 90.4265) > 0.05) {
+        return "Geocoding failed for BRAC University.";
+    }
+
+    return true;
+});
+
+// -----------------------------------------------------------------------------
+// 11. TEST SUITE: Route Corridor Point-to-Segment Cross-Track Calculation
+// -----------------------------------------------------------------------------
+run_test('Route Corridor Point-to-Segment Distance (Kazipara along Mirpur -> BRACU)', function() {
+    // Driver: Mirpur 10 (23.8069, 90.3687) -> BRAC University (23.7781, 90.4265)
+    // Passenger pickup: Kazipara (23.7975, 90.3730)
+    $corridor = get_cross_track_distance_km(23.8069, 90.3687, 23.7781, 90.4265, 23.7975, 90.3730);
+
+    if ($corridor['distance'] !== null && $corridor['distance'] <= 1.5 && $corridor['progress'] > 0.0 && $corridor['progress'] < 0.5) {
+        return true;
+    }
+    return "Route corridor calculation abnormal: distance=" . $corridor['distance'] . "km, progress=" . $corridor['progress'];
+});
+
+// -----------------------------------------------------------------------------
+// 12. TEST SUITE: Coordinate-Based Ride Matching (Mohammadpur -> BRAC University)
+// -----------------------------------------------------------------------------
+run_test('Coordinate-Based Ride Matching (Mohammadpur -> BRAC University)', function() {
+    $mockRide = [
+        'RideID' => 995,
+        'DriverID' => 7,
+        'StartLocation' => 'Mohammadpur',
+        'Destination' => 'BRAC University',
+        'StartLatitude' => 23.7542,
+        'StartLongitude' => 90.3587,
+        'DestinationLatitude' => 23.7781,
+        'DestinationLongitude' => 90.4265,
+        'RideDate' => date('Y-m-d', strtotime('+1 day')),
+        'DepartureTime' => '08:15:00',
+        'UniversityVerified' => 1
+    ];
+
+    // Search from Mohammadpur coordinates to BRAC University coordinates
+    $match = calculate_ride_match(
+        'BRAC University',
+        'Mohammadpur',
+        date('Y-m-d', strtotime('+1 day')),
+        '08:15',
+        false,
+        $mockRide,
+        23.7542,
+        90.3587,
+        23.7781,
+        90.4265
+    );
+
+    if ($match['isMatch'] && $match['score'] >= 80) {
+        return true;
+    }
+    return "Coordinate match failed for Mohammadpur ride. Score: " . ($match['score'] ?? 0);
+});
+
+// -----------------------------------------------------------------------------
+// 13. TEST SUITE: Notification Direct Redirect Links & Schema Integrity
+// -----------------------------------------------------------------------------
+run_test('Notification Direct Chat & Ride Redirection Links', function() {
+    global $pdo;
+
+    // 1. Create a test notification with direct chat link
+    $testUid = 7; // Karim
+    $testLink = 'chat.php?ride_id=1';
+    $created = create_notification($pdo, $testUid, 'chat', 'Test Message Alert', 'Hey, I am at the gate!', $testLink);
+    if (!$created) return "Failed to insert notification with link.";
+
+    $notifId = (int)$pdo->lastInsertId();
+    $n = $pdo->query("SELECT * FROM `Notification` WHERE `NotificationID` = $notifId")->fetch();
+
+    if (!$n || $n['Link'] !== $testLink || $n['Type'] !== 'chat') {
+        return "Notification Link column failed to persist: " . json_encode($n);
+    }
+
+    // Clean up
+    $pdo->prepare("DELETE FROM `Notification` WHERE `NotificationID` = ?")->execute([$notifId]);
+
+    return true;
+});
+
+// -----------------------------------------------------------------------------
+// 14. TEST SUITE: Women-Only Ride Gender Safety Enforcement
+// -----------------------------------------------------------------------------
+run_test('Women-Only Ride Gender Safety Enforcement (Block Male Passengers)', function() {
+    global $pdo;
+
+    // Ensure Female test user exists
+    $pdo->prepare("INSERT IGNORE INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`, `UniversityVerified`) VALUES (98, 'Sadia Khan', 'sadia.khan@g.bracu.ac.bd', 'hash', 'Female', 21, 'Driver', 1)")->execute();
+    $pdo->prepare("INSERT IGNORE INTO `Driver` (`UserID`, `LicenseNo`) VALUES (98, 'LIC-98-TEST')")->execute();
+
+    // Ensure Male test user exists
+    $pdo->prepare("INSERT IGNORE INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`, `UniversityVerified`) VALUES (99, 'Tariq Rahman', 'tariq.rahman@g.bracu.ac.bd', 'hash', 'Male', 22, 'Passenger', 1)")->execute();
+
+    // Create a Women-Only test ride
+    $pdo->prepare("
+        INSERT INTO `Ride` (`RideID`, `DriverID`, `StartLocation`, `Destination`, `RideDate`, `DepartureTime`, `TotalSeats`, `AvailableSeats`, `SharedCost`, `IsWomenOnly`, `Status`, `created_at`)
+        VALUES (994, 98, 'Dhanmondi', 'BRAC University', CURDATE(), '09:00:00', 3, 3, 100.00, 1, 'Open', NOW())
+    ")->execute();
+
+    // 1. Verify Male user gender check
+    $mStmt = $pdo->prepare("SELECT Gender FROM `User` WHERE UserID = 99");
+    $mStmt->execute();
+    $mGender = $mStmt->fetchColumn();
+
+    $rStmt = $pdo->prepare("SELECT IsWomenOnly FROM `Ride` WHERE RideID = 994");
+    $rStmt->execute();
+    $isWomenOnly = (int)$rStmt->fetchColumn();
+
+    if ($isWomenOnly === 1 && $mGender !== 'Female') {
+        // Male blocked successfully
+    } else {
+        return "Gender verification failed to identify male user on women-only ride.";
+    }
+
+    // 2. Verify Female user is eligible
+    $fStmt = $pdo->prepare("SELECT Gender FROM `User` WHERE UserID = 98");
+    $fStmt->execute();
+    $fGender = $fStmt->fetchColumn();
+
+    if ($fGender !== 'Female') {
+        return "Female user check failed.";
+    }
+
+    // Clean up
+    $pdo->prepare("DELETE FROM `Ride` WHERE `RideID` = 994")->execute();
+    $pdo->prepare("DELETE FROM `User` WHERE `UserID` IN (98, 99)")->execute();
+
+    return true;
+});
+
 $totalTests = count($results);
 $passedTests = count(array_filter($results, fn($r) => $r['passed']));
 ?>

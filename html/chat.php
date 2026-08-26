@@ -50,8 +50,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['send_message'])) {
         $recips = $recipStmt->fetchAll(PDO::FETCH_COLUMN);
 
         $senderName = $_SESSION['name'] ?? 'A member';
+        $chatLink = "chat.php?ride_id=" . $rideId;
         foreach ($recips as $rcpId) {
-            create_notification($pdo, $rcpId, 'chat', 'New Ride Message 💬', "$senderName: " . substr($msgText, 0, 50));
+            create_notification($pdo, $rcpId, 'chat', 'New Ride Message 💬', "$senderName: " . substr($msgText, 0, 50), $chatLink);
         }
 
         header("Location: chat.php?ride_id=$rideId");
@@ -186,7 +187,7 @@ $messages = $mStmt->fetchAll();
                                 <?= nl2br(htmlspecialchars($msg['Message'])) ?>
                             </div>
                             <div class="message-time">
-                                <?= date('g:i A', strtotime($msg['created_at'])) ?>
+                                <?= format_message_time($msg['created_at']) ?>
                             </div>
                         </div>
                     <?php endforeach; ?>

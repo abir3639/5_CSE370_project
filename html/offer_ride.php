@@ -14,7 +14,12 @@ $userRole = $_SESSION['user_type'] ?? 'Passenger';
 
 $error = '';
 $startLocation = $_POST['start_location'] ?? 'Mirpur 10';
+$startLat = $_POST['start_lat'] ?? '23.8069';
+$startLng = $_POST['start_lng'] ?? '90.3687';
 $destination = $_POST['destination'] ?? 'BRAC University';
+$destLat = $_POST['dest_lat'] ?? '23.7781';
+$destLng = $_POST['dest_lng'] ?? '90.4265';
+
 $rideDate = $_POST['ride_date'] ?? date('Y-m-d', strtotime('+1 day'));
 $departureTime = $_POST['departure_time'] ?? '08:00';
 $availableSeats = (int)($_POST['available_seats'] ?? 3);
@@ -40,7 +45,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_ride'])) {
         $error = "Available seats must be between 1 and 8.";
     } elseif (strtolower(trim($startLocation)) === strtolower(trim($destination))) {
         $error = "Starting location and destination cannot be identical.";
-    } else {
+    } elseif ($isWomenOnly) {
+        $uGenStmt = $pdo->prepare("SELECT Gender FROM `User` WHERE UserID = ?");
+        $uGenStmt->execute([$currentUserId]);
+        $driverGender = $uGenStmt->fetchColumn();
+        if ($driverGender !== 'Female') {
+            $error = "🌸 Only verified female drivers can offer Women-Only carpools.";
+        }
+    }
+    
+    if (empty($error)) {
         try {
             $pdo->beginTransaction();
 
@@ -64,13 +78,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_ride'])) {
                     ->execute([$regNo, $vehicleInfo, $currentUserId, $vehicleInfo]);
             }
 
-            // Geocode start and destination locations
-            $startGeo = geocode_location($startLocation);
-            $destGeo = geocode_location($destination);
+            // Geocode start and destination locations using provided coordinates or fallback lookup
+            $startGeo = geocode_location($startLocation, $startLat, $startLng);
+            $destGeo = geocode_location($destination, $destLat, $destLng);
 
             $distanceKm = get_distance_km($startGeo['lat'], $startGeo['lng'], $destGeo['lat'], $destGeo['lng']);
 
-            // Insert Ride
+            // Insert Ride with verified coordinates
             $insRide = $pdo->prepare("
                 INSERT INTO `Ride` (
                     `DriverID`, `StartLocation`, `Destination`, 
@@ -113,8 +127,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_ride'])) {
         }
     }
 }
-
-$dhakaLocs = get_dhaka_locations();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -155,11 +167,12 @@ $dhakaLocs = get_dhaka_locations();
             border-color: var(--primary);
         }
         #previewMap {
-            height: 200px;
+            height: 240px;
             width: 100%;
-            border-radius: 8px;
-            margin-bottom: 1.25rem;
+            border-radius: var(--radius);
+            margin-bottom: 1.5rem;
             border: 1px solid var(--border-color);
+            box-shadow: var(--shadow-sm);
         }
     </style>
 </head>
@@ -178,43 +191,63 @@ $dhakaLocs = get_dhaka_locations();
                     <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
                 <?php endif; ?>
 
+                <!-- Quick Presets -->
                 <div class="route-toggle-buttons">
-                    <button type="button" class="route-preset-btn" onclick="setRoutePreset('Mirpur 10', 'BRAC University')">
+                    <button type="button" class="route-preset-btn" onclick="setPreset('Mohammadpur', 23.7542, 90.3587, 'BRAC University', 23.7781, 90.4265)">
+                        Mohammadpur → BRACU
+                    </button>
+                    <button type="button" class="route-preset-btn" onclick="setPreset('Mirpur 10', 23.8069, 90.3687, 'BRAC University', 23.7781, 90.4265)">
                         Mirpur 10 → BRACU
                     </button>
-                    <button type="button" class="route-preset-btn" onclick="setRoutePreset('BRAC University', 'Mirpur 10')">
+                    <button type="button" class="route-preset-btn" onclick="setPreset('BRAC University', 23.7781, 90.4265, 'Mirpur 10', 23.8069, 90.3687)">
                         BRACU → Mirpur 10
                     </button>
-                    <button type="button" class="route-preset-btn" onclick="setRoutePreset('Uttara', 'BRAC University')">
+                    <button type="button" class="route-preset-btn" onclick="setPreset('Uttara', 23.8759, 90.3795, 'BRAC University', 23.7781, 90.4265)">
                         Uttara → BRACU
                     </button>
-                    <button type="button" class="route-preset-btn" onclick="setRoutePreset('BRAC University', 'Uttara')">
-                        BRACU → Uttara
-                    </button>
-                    <button type="button" class="route-preset-btn" onclick="setRoutePreset('Dhanmondi', 'BRAC University')">
+                    <button type="button" class="route-preset-btn" onclick="setPreset('Dhanmondi', 23.7465, 90.3760, 'BRAC University', 23.7781, 90.4265)">
                         Dhanmondi → BRACU
                     </button>
                 </div>
 
+                <!-- Interactive Route Map Preview -->
                 <div id="previewMap"></div>
 
-                <form method="POST">
+                <form method="POST" id="offerRideForm">
                     <input type="hidden" name="create_ride" value="1">
+                    <input type="hidden" id="start_lat" name="start_lat" value="<?= htmlspecialchars($startLat) ?>">
+                    <input type="hidden" id="start_lng" name="start_lng" value="<?= htmlspecialchars($startLng) ?>">
+                    <input type="hidden" id="dest_lat" name="dest_lat" value="<?= htmlspecialchars($destLat) ?>">
+                    <input type="hidden" id="dest_lng" name="dest_lng" value="<?= htmlspecialchars($destLng) ?>">
 
-                    <datalist id="dhakaLocations">
-                        <?php foreach ($dhakaLocs as $name => $data): ?>
-                            <option value="<?= htmlspecialchars($name) ?>"></option>
-                        <?php endforeach; ?>
-                    </datalist>
-
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                        <div class="form-group">
-                            <label>Starting Location *</label>
-                            <input type="text" id="start_location" name="start_location" list="dhakaLocations" class="form-control" placeholder="e.g. Mirpur 10, Dhanmondi" value="<?= htmlspecialchars($startLocation) ?>" onchange="updatePreviewMap()" required>
+                    <!-- Uber-Style Location Inputs -->
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.25rem;">
+                        <div>
+                            <label style="display: block; margin-bottom: 0.45rem; font-weight: 700; font-size: 0.85rem; color: #334155;">
+                                Starting Location (Pickup) *
+                            </label>
+                            <div class="location-input-card" id="startLocCard">
+                                <span style="font-size: 1.3rem;">📍</span>
+                                <div class="loc-card-text">
+                                    <div class="loc-card-label">From</div>
+                                    <input type="text" id="start_location" name="start_location" class="form-control" style="border: none; padding: 0; font-weight: 700; background: transparent; cursor: pointer;" value="<?= htmlspecialchars($startLocation) ?>" readonly required>
+                                </div>
+                                <span class="loc-card-action-chip">Change on Map 🗺️</span>
+                            </div>
                         </div>
-                        <div class="form-group">
-                            <label>Destination *</label>
-                            <input type="text" id="destination" name="destination" list="dhakaLocations" class="form-control" placeholder="e.g. BRAC University" value="<?= htmlspecialchars($destination) ?>" onchange="updatePreviewMap()" required>
+
+                        <div>
+                            <label style="display: block; margin-bottom: 0.45rem; font-weight: 700; font-size: 0.85rem; color: #334155;">
+                                Destination (Drop-off) *
+                            </label>
+                            <div class="location-input-card" id="destLocCard">
+                                <span style="font-size: 1.3rem;">🎯</span>
+                                <div class="loc-card-text">
+                                    <div class="loc-card-label">To</div>
+                                    <input type="text" id="destination" name="destination" class="form-control" style="border: none; padding: 0; font-weight: 700; background: transparent; cursor: pointer;" value="<?= htmlspecialchars($destination) ?>" readonly required>
+                                </div>
+                                <span class="loc-card-action-chip">Change on Map 🗺️</span>
+                            </div>
                         </div>
                     </div>
 
@@ -251,86 +284,134 @@ $dhakaLocs = get_dhaka_locations();
                     </div>
 
                     <div class="form-group">
-                        <label>Notes & Route Flexibility (Optional)</label>
-                        <textarea name="notes" class="form-control" rows="2" placeholder="e.g. AC is on. Can pick up along Pragati Sarani or Mirpur Road. Please be on time!"><?= htmlspecialchars($notes) ?></textarea>
+                        <label>Pickup Landmark / Additional Notes</label>
+                        <textarea name="notes" class="form-control" rows="2" placeholder="e.g. Will wait in front of Star Kabab. AC is on."><?= htmlspecialchars($notes) ?></textarea>
                     </div>
 
-                    <div style="background: #fdf2f8; border: 1.5px solid #fbcfe8; padding: 0.85rem 1rem; border-radius: 8px; margin-bottom: 1.25rem; display: flex; align-items: center; gap: 0.75rem;">
-                        <input type="checkbox" id="is_women_only" name="is_women_only" value="1" <?= $isWomenOnly ? 'checked' : '' ?> style="width: 18px; height: 18px; accent-color: #db2777;">
-                        <label for="is_women_only" style="margin-bottom: 0; font-size: 0.9rem; color: #9d174d; font-weight: 700; cursor: pointer;">
-                            🌸 Women-Only Carpool (Seats restricted to female university riders)
+                    <div class="form-group" style="background: #fdf2f8; border: 1px solid #fbcfe8; padding: 1rem; border-radius: var(--radius-sm); margin-bottom: 1.5rem;">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; color: #9d174d; font-weight: 700; margin-bottom: 0;">
+                            <input type="checkbox" name="is_women_only" value="1" <?= $isWomenOnly ? 'checked' : '' ?>>
+                            🌸 Women-Only Ride (Only female university students can request to join)
                         </label>
                     </div>
 
-                    <button type="submit" class="btn btn-primary" style="padding: 0.85rem; font-size: 1.05rem;">Publish Ride Offer</button>
+                    <button type="submit" class="btn btn-primary" style="font-size: 1.05rem; padding: 1rem; font-weight: 800;">
+                        Publish Ride Offer 🚀
+                    </button>
                 </form>
             </div>
         </div>
     </div>
 
+    <!-- Reusable Location Picker Script -->
+    <script src="location_picker.js"></script>
     <script>
-        var map, startMarker, destMarker, polyline;
-        var locData = <?= json_encode($dhakaLocs) ?>;
+        let previewMap = null;
+        let startMarker = null;
+        let destMarker = null;
+        let routePolyline = null;
 
-        document.addEventListener('DOMContentLoaded', function() {
-            map = L.map('previewMap').setView([23.7781, 90.4265], 12);
+        function initPreviewMap() {
+            if (typeof L === 'undefined') return;
+
+            const sLat = parseFloat(document.getElementById('start_lat').value) || 23.8069;
+            const sLng = parseFloat(document.getElementById('start_lng').value) || 90.3687;
+            const dLat = parseFloat(document.getElementById('dest_lat').value) || 23.7781;
+            const dLng = parseFloat(document.getElementById('dest_lng').value) || 90.4265;
+
+            previewMap = L.map('previewMap').setView([23.7781, 90.4000], 12);
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
                 attribution: '&copy; OpenStreetMap'
-            }).addTo(map);
+            }).addTo(previewMap);
 
-            updatePreviewMap();
-        });
-
-        function getCoords(name) {
-            var n = name.trim();
-            if (locData[n]) {
-                return [locData[n].lat, locData[n].lng];
-            }
-            if (n.toLowerCase().includes('brac')) {
-                return [23.7781, 90.4265];
-            }
-            if (n.toLowerCase().includes('mirpur')) {
-                return [23.8069, 90.3687];
-            }
-            if (n.toLowerCase().includes('uttara')) {
-                return [23.8759, 90.3795];
-            }
-            if (n.toLowerCase().includes('dhanmondi')) {
-                return [23.7465, 90.3760];
-            }
-            return [23.7781, 90.4265];
+            updatePreviewRoute();
         }
 
-        function setRoutePreset(start, dest) {
-            document.getElementById('start_location').value = start;
-            document.getElementById('destination').value = dest;
-            updatePreviewMap();
-        }
+        function updatePreviewRoute() {
+            if (!previewMap) return;
 
-        function updatePreviewMap() {
-            var startName = document.getElementById('start_location').value || 'Mirpur 10';
-            var destName = document.getElementById('destination').value || 'BRAC University';
+            const sLat = parseFloat(document.getElementById('start_lat').value) || 23.8069;
+            const sLng = parseFloat(document.getElementById('start_lng').value) || 90.3687;
+            const dLat = parseFloat(document.getElementById('dest_lat').value) || 23.7781;
+            const dLng = parseFloat(document.getElementById('dest_lng').value) || 90.4265;
 
-            var startCoords = getCoords(startName);
-            var destCoords = getCoords(destName);
+            if (startMarker) previewMap.removeLayer(startMarker);
+            if (destMarker) previewMap.removeLayer(destMarker);
+            if (routePolyline) previewMap.removeLayer(routePolyline);
 
-            if (startMarker) map.removeLayer(startMarker);
-            if (destMarker) map.removeLayer(destMarker);
-            if (polyline) map.removeLayer(polyline);
+            const startIcon = L.divIcon({
+                className: 'uber-custom-map-pin',
+                html: `<div class="pin-marker-body">📍</div>`,
+                iconSize: [30, 30],
+                iconAnchor: [15, 30]
+            });
 
-            startMarker = L.marker(startCoords).addTo(map).bindPopup("<b>Start:</b> " + startName);
-            destMarker = L.marker(destCoords).addTo(map).bindPopup("<b>Destination:</b> " + destName);
+            const destIcon = L.divIcon({
+                className: 'uber-custom-map-pin',
+                html: `<div class="pin-marker-body">🎯</div>`,
+                iconSize: [30, 30],
+                iconAnchor: [15, 30]
+            });
 
-            polyline = L.polyline([startCoords, destCoords], {
+            startMarker = L.marker([sLat, sLng], { icon: startIcon }).addTo(previewMap)
+                .bindPopup("<b>Pickup:</b> " + document.getElementById('start_location').value);
+            
+            destMarker = L.marker([dLat, dLng], { icon: destIcon }).addTo(previewMap)
+                .bindPopup("<b>Destination:</b> " + document.getElementById('destination').value);
+
+            routePolyline = L.polyline([[sLat, sLng], [dLat, dLng]], {
                 color: '#0284c7',
                 weight: 4,
-                opacity: 0.8,
-                dashArray: '6, 6'
-            }).addTo(map);
+                opacity: 0.85,
+                dashArray: '8, 8'
+            }).addTo(previewMap);
 
-            var bounds = L.latLngBounds([startCoords, destCoords]);
-            map.fitBounds(bounds, { padding: [30, 30] });
+            const group = L.featureGroup([startMarker, destMarker]);
+            previewMap.fitBounds(group.getBounds().pad(0.2));
         }
+
+        function setPreset(sName, sLat, sLng, dName, dLat, dLng) {
+            document.getElementById('start_location').value = sName;
+            document.getElementById('start_lat').value = sLat;
+            document.getElementById('start_lng').value = sLng;
+
+            document.getElementById('destination').value = dName;
+            document.getElementById('dest_lat').value = dLat;
+            document.getElementById('dest_lng').value = dLng;
+
+            updatePreviewRoute();
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            initPreviewMap();
+
+            // Bind Start Location Picker
+            attachUberLocationPicker({
+                triggerId: 'startLocCard',
+                displayInputId: 'start_location',
+                hiddenLatId: 'start_lat',
+                hiddenLngId: 'start_lng',
+                title: 'Where are you starting from?',
+                isDestination: false,
+                onChange: function () {
+                    updatePreviewRoute();
+                }
+            });
+
+            // Bind Destination Picker
+            attachUberLocationPicker({
+                triggerId: 'destLocCard',
+                displayInputId: 'destination',
+                hiddenLatId: 'dest_lat',
+                hiddenLngId: 'dest_lng',
+                title: 'Where are you going?',
+                isDestination: true,
+                onChange: function () {
+                    updatePreviewRoute();
+                }
+            });
+        });
     </script>
 
     <?php render_footer(); ?>
