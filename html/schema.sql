@@ -1,0 +1,132 @@
+-- BRAC University Rideshare Platform Database Schema
+
+CREATE DATABASE IF NOT EXISTS `rideshare_db` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE `rideshare_db`;
+
+CREATE TABLE IF NOT EXISTS `Admin` (
+    `AdminID` INT AUTO_INCREMENT PRIMARY KEY,
+    `Email` VARCHAR(100) NOT NULL UNIQUE,
+    `Role` VARCHAR(50) NOT NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `User` (
+    `UserID` INT AUTO_INCREMENT PRIMARY KEY,
+    `Name` VARCHAR(100) NOT NULL,
+    `Email` VARCHAR(100) NOT NULL UNIQUE,
+    `Password` VARCHAR(255) NOT NULL,
+    `Gender` ENUM('Male', 'Female', 'Other') NOT NULL,
+    `Age` INT CHECK (`Age` >= 18),
+    `UserType` ENUM('Passenger', 'Driver', 'Admin') NOT NULL DEFAULT 'Passenger',
+    `AdminID` INT NULL,
+    `ProfileImage` VARCHAR(255) NULL,
+    `UniversityVerified` TINYINT(1) DEFAULT 0,
+    `RatingAverage` DECIMAL(3,2) DEFAULT 5.00,
+    `RatingCount` INT DEFAULT 0,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (`AdminID`) REFERENCES `Admin`(`AdminID`) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `User_Phone` (
+    `UserID` INT NOT NULL,
+    `Phone` VARCHAR(20) NOT NULL,
+    PRIMARY KEY (`UserID`, `Phone`),
+    FOREIGN KEY (`UserID`) REFERENCES `User`(`UserID`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `Passenger` (
+    `UserID` INT PRIMARY KEY,
+    `PassRating` DECIMAL(3,2) DEFAULT 5.00 CHECK (`PassRating` BETWEEN 0.00 AND 5.00),
+    FOREIGN KEY (`UserID`) REFERENCES `User`(`UserID`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `Driver` (
+    `UserID` INT PRIMARY KEY,
+    `LicenseNo` VARCHAR(50) NOT NULL UNIQUE,
+    FOREIGN KEY (`UserID`) REFERENCES `User`(`UserID`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `Vehicle` (
+    `RegNo` VARCHAR(50) PRIMARY KEY,
+    `Model` VARCHAR(100) NOT NULL,
+    `UserID` INT NOT NULL,
+    FOREIGN KEY (`UserID`) REFERENCES `Driver`(`UserID`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `FavoriteLocation` (
+    `LocID` INT AUTO_INCREMENT PRIMARY KEY,
+    `Address` VARCHAR(255) NOT NULL,
+    `UserID` INT NOT NULL,
+    FOREIGN KEY (`UserID`) REFERENCES `User`(`UserID`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `Ride` (
+    `RideID` INT AUTO_INCREMENT PRIMARY KEY,
+    `DriverID` INT NOT NULL,
+    `StartLocation` VARCHAR(255) NOT NULL,
+    `Destination` VARCHAR(255) NOT NULL,
+    `StartLatitude` DECIMAL(10, 8) NULL,
+    `StartLongitude` DECIMAL(11, 8) NULL,
+    `DestinationLatitude` DECIMAL(10, 8) NULL,
+    `DestinationLongitude` DECIMAL(11, 8) NULL,
+    `RideDate` DATE NOT NULL,
+    `DepartureTime` TIME NOT NULL,
+    `AvailableSeats` INT NOT NULL,
+    `TotalSeats` INT NOT NULL,
+    `VehicleInfo` VARCHAR(255) NULL,
+    `SharedCost` DECIMAL(10,2) DEFAULT 0.00,
+    `Notes` TEXT NULL,
+    `Status` ENUM('Draft', 'Open', 'Full', 'Pending', 'Confirmed', 'In Progress', 'Completed', 'Cancelled') NOT NULL DEFAULT 'Open',
+    `Distance` DECIMAL(6,2) NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (`DriverID`) REFERENCES `Driver`(`UserID`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `RideRequest` (
+    `RequestID` INT AUTO_INCREMENT PRIMARY KEY,
+    `RideID` INT NOT NULL,
+    `PassengerID` INT NOT NULL,
+    `Status` ENUM('Pending', 'Accepted', 'Rejected') NOT NULL DEFAULT 'Pending',
+    `RequestedAt` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `RespondedAt` TIMESTAMP NULL,
+    FOREIGN KEY (`RideID`) REFERENCES `Ride`(`RideID`) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (`PassengerID`) REFERENCES `Passenger`(`UserID`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `RideParticipant` (
+    `RideID` INT NOT NULL,
+    `UserID` INT NOT NULL,
+    `Role` ENUM('Driver', 'Passenger') NOT NULL DEFAULT 'Passenger',
+    `ArrivalStatus` ENUM('Pending', 'Reached', 'Not Reached') NOT NULL DEFAULT 'Pending',
+    `JoinedAt` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`RideID`, `UserID`),
+    FOREIGN KEY (`RideID`) REFERENCES `Ride`(`RideID`) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (`UserID`) REFERENCES `User`(`UserID`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `Rating` (
+    `RatingID` INT AUTO_INCREMENT PRIMARY KEY,
+    `RideID` INT NOT NULL,
+    `ReviewerID` INT NOT NULL,
+    `RecipientID` INT NOT NULL,
+    `Rating` INT NOT NULL CHECK (`Rating` BETWEEN 1 AND 5),
+    `Review` TEXT NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (`RideID`) REFERENCES `Ride`(`RideID`) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (`ReviewerID`) REFERENCES `User`(`UserID`) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (`RecipientID`) REFERENCES `User`(`UserID`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS `Notification` (
+    `NotificationID` INT AUTO_INCREMENT PRIMARY KEY,
+    `UserID` INT NOT NULL,
+    `Type` VARCHAR(50) NOT NULL,
+    `Title` VARCHAR(100) NOT NULL,
+    `Message` TEXT NOT NULL,
+    `IsRead` TINYINT(1) DEFAULT 0,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (`UserID`) REFERENCES `User`(`UserID`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB;
+
+INSERT IGNORE INTO `Admin` (`AdminID`, `Email`, `Role`) VALUES 
+(1, 'admin@rideshare.com', 'SuperAdmin');

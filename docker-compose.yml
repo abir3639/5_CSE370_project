@@ -1,0 +1,35 @@
+services:
+  db:
+    image: mariadb:10.11
+    container_name: website-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: mywebsite_db
+      MYSQL_USER: siteuser
+      MYSQL_PASSWORD: sitepassword
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./html/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    networks:
+      - web-net
+
+  app:
+    image: php:8.2-apache
+    container_name: website-app
+    restart: unless-stopped
+    ports:
+      - "8088:80"
+    volumes:
+      - ./html:/var/www/html
+    depends_on:
+      - db
+    networks:
+      - web-net
+
+volumes:
+  db_data:
+
+networks:
+  web-net:
+    driver: bridge

@@ -1,0 +1,11 @@
+# Ignore Docker data volumes
+db_data/
+
+# Ignore environment variables / secrets
+.env
+*.log
+
+# Ignore OS/IDE files
+.DS_Store
+Thumbs.db
+.vscode/
