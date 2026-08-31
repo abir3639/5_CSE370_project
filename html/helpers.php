@@ -397,21 +397,49 @@ function render_navbar($activeTab = '') {
                 </div>
             </a>
 
-            <div class="nav-links">
-                <a href="index.php" class="nav-item <?= $activeTab === 'find' ? 'active' : '' ?>">
-                    <svg class="nav-svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/></svg>
-                    Find Ride
-                </a>
-                <a href="offer_ride.php" class="nav-item <?= $activeTab === 'offer' ? 'active' : '' ?>">
-                    <svg class="nav-svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg>
-                    Offer Ride
-                </a>
-                <a href="lost_found.php" class="nav-item <?= $activeTab === 'lost_found' ? 'active' : '' ?>">
-                    <svg class="nav-svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/><path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a1 1 0 110 2H7a1 1 0 110-2h2V6.477L6.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 015 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.617a1 1 0 01.894-1.788l1.599.799L9 4.323V3a1 1 0 011-1z" clip-rule="evenodd"/></svg>
-                    Lost & Found
-                </a>
-                
-                <?php if ($isLoggedIn): ?>
+            <!-- Mobile Hamburger Menu Button -->
+            <button type="button" class="nav-mobile-toggle" id="navMobileToggle" onclick="toggleMobileNavbar()" aria-label="Toggle navigation menu">
+                <span class="bar"></span>
+                <span class="bar"></span>
+                <span class="bar"></span>
+                <?php if ($unreadCount > 0): ?>
+                    <span class="badge-notif-dot"></span>
+                <?php endif; ?>
+            </button>
+
+            <div class="nav-links" id="navLinksMenu">
+                <?php if ($isLoggedIn && $userRole === 'Admin'): ?>
+                    <a href="admin.php" class="nav-item <?= $activeTab === 'admin' ? 'active' : '' ?>" style="font-weight: 700; color: #1e40af; background: #eff6ff; border-radius: 6px; padding: 0.4rem 0.75rem;">
+                        <svg class="nav-svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 1.944A11.954 11.954 0 012.166 5C2.056 5.649 2 6.319 2 7c0 5.225 3.34 9.67 8 11.317C14.66 16.67 18 12.225 18 7c0-.682-.057-1.35-.166-2.001A11.954 11.954 0 0110 1.944zM11 14a1 1 0 11-2 0 1 1 0 012 0zm0-7a1 1 0 10-2 0v3a1 1 0 102 0V7z" clip-rule="evenodd"/></svg>
+                        🛡️ Admin Control Panel
+                    </a>
+                    <a href="index.php" class="nav-item <?= $activeTab === 'find' ? 'active' : '' ?>">
+                        <svg class="nav-svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/></svg>
+                        All Rides
+                    </a>
+                    <a href="lost_found.php" class="nav-item <?= $activeTab === 'lost_found' ? 'active' : '' ?>">
+                        <svg class="nav-svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/><path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a1 1 0 110 2H7a1 1 0 110-2h2V6.477L6.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 015 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.617a1 1 0 01.894-1.788l1.599.799L9 4.323V3a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+                        Lost & Found
+                    </a>
+                    <a href="profile.php" class="nav-item <?= $activeTab === 'profile' ? 'active' : '' ?>">
+                        <div class="nav-avatar" style="background: #1e40af;">A</div>
+                        <span>Admin</span>
+                        <span class="badge-verified" style="font-size: 0.65rem; padding: 0.1rem 0.35rem; background: #dbeafe; color: #1e40af; border: none;">Admin</span>
+                    </a>
+                    <a href="logout.php" class="nav-btn-logout" title="Log Out">Exit</a>
+                <?php elseif ($isLoggedIn): ?>
+                    <a href="index.php" class="nav-item <?= $activeTab === 'find' ? 'active' : '' ?>">
+                        <svg class="nav-svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/></svg>
+                        Find Ride
+                    </a>
+                    <a href="offer_ride.php" class="nav-item <?= $activeTab === 'offer' ? 'active' : '' ?>">
+                        <svg class="nav-svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+                        Offer Ride
+                    </a>
+                    <a href="lost_found.php" class="nav-item <?= $activeTab === 'lost_found' ? 'active' : '' ?>">
+                        <svg class="nav-svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/><path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a1 1 0 110 2H7a1 1 0 110-2h2V6.477L6.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 015 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.617a1 1 0 01.894-1.788l1.599.799L9 4.323V3a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+                        Lost & Found
+                    </a>
                     <a href="my_rides.php" class="nav-item <?= $activeTab === 'my_rides' ? 'active' : '' ?>">
                         <svg class="nav-svg" viewBox="0 0 20 20" fill="currentColor"><path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/><path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"/></svg>
                         My Rides
@@ -432,13 +460,33 @@ function render_navbar($activeTab = '') {
                     </a>
                     <a href="logout.php" class="nav-btn-logout" title="Log Out">Exit</a>
                 <?php else: ?>
-                    <a href="stats.php" class="nav-item <?= $activeTab === 'stats' ? 'active' : '' ?>">Stats</a>
+                    <a href="index.php" class="nav-item <?= $activeTab === 'find' ? 'active' : '' ?>">Find Ride</a>
+                    <a href="lost_found.php" class="nav-item <?= $activeTab === 'lost_found' ? 'active' : '' ?>">Lost & Found</a>
                     <a href="login.php" class="nav-btn-login">Log In</a>
                     <a href="register.php" class="nav-btn-signup">Sign Up</a>
                 <?php endif; ?>
             </div>
         </div>
     </nav>
+    <script>
+        function toggleMobileNavbar() {
+            var menu = document.getElementById('navLinksMenu');
+            var btn = document.getElementById('navMobileToggle');
+            if (menu) menu.classList.toggle('nav-open');
+            if (btn) btn.classList.toggle('is-active');
+        }
+        // Close menu on click outside
+        document.addEventListener('click', function(e) {
+            var menu = document.getElementById('navLinksMenu');
+            var btn = document.getElementById('navMobileToggle');
+            if (menu && menu.classList.contains('nav-open')) {
+                if (!menu.contains(e.target) && !btn.contains(e.target)) {
+                    menu.classList.remove('nav-open');
+                    if (btn) btn.classList.remove('is-active');
+                }
+            }
+        });
+    </script>
     <?php
 }
 

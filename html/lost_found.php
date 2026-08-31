@@ -572,7 +572,7 @@ $categoriesList = [
 
                 <div style="flex: 1; min-width: 140px;">
                     <select name="status" class="form-control" style="margin-bottom: 0;">
-                        <option value="">All Statuses</option>
+                        <option value="">All Status</option>
                         <option value="Open" <?= $filterStatus === 'Open' ? 'selected' : '' ?>>Open</option>
                         <option value="Claimed" <?= $filterStatus === 'Claimed' ? 'selected' : '' ?>>Claim Pending</option>
                         <option value="Resolved" <?= $filterStatus === 'Resolved' ? 'selected' : '' ?>>Resolved / Returned</option>
@@ -689,6 +689,15 @@ $categoriesList = [
                                         <input type="hidden" name="item_id" value="<?= $it['ItemID'] ?>">
                                         <button type="submit" class="btn btn-primary" style="padding: 0.55rem 0.85rem; font-size: 0.85rem;" title="Mark as Returned">
                                             ✓ Resolved
+                                        </button>
+                                    </form>
+                                <?php endif; ?>
+                                <?php if ($isAdmin): ?>
+                                    <form method="POST" action="api_actions.php" style="margin: 0;" onsubmit="return confirm('Admin: Permanently remove this lost & found report?');">
+                                        <input type="hidden" name="action" value="admin_delete_lost_item">
+                                        <input type="hidden" name="item_id" value="<?= $it['ItemID'] ?>">
+                                        <button type="submit" class="btn btn-danger" style="padding: 0.55rem 0.85rem; font-size: 0.85rem;" title="Admin: Delete Submission">
+                                            🗑️
                                         </button>
                                     </form>
                                 <?php endif; ?>
@@ -897,18 +906,29 @@ $categoriesList = [
                     </div>
                 <?php endif; ?>
 
-                <!-- Reporter Actions (Resolve / Delete) -->
-                <?php if (($isMyReport || $isAdmin) && $selectedItem['Status'] !== 'Resolved'): ?>
+                <!-- Reporter & Admin Actions (Resolve / Delete) -->
+                <?php if ($isMyReport || $isAdmin): ?>
                     <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: var(--radius); padding: 1.25rem; margin-bottom: 1.5rem;">
                         <h4 style="font-size: 0.95rem; font-weight: 800; color: #166534; margin-bottom: 0.5rem;">Manage Report</h4>
-                        <form method="POST" action="api_actions.php" style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
-                            <input type="hidden" name="action" value="resolve_lost_item">
-                            <input type="hidden" name="item_id" value="<?= $selectedItem['ItemID'] ?>">
-                            <input type="text" name="resolution_notes" class="form-control" placeholder="Resolution notes (e.g. Handed back to Rahim in UB building)" style="flex: 1; min-width: 200px; margin-bottom: 0;">
-                            <button type="submit" class="btn btn-primary" style="background: #15803d; border-color: #15803d; width: auto;">
-                                ✓ Mark Returned & Resolved
-                            </button>
-                        </form>
+                        <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
+                            <?php if ($selectedItem['Status'] !== 'Resolved'): ?>
+                                <form method="POST" action="api_actions.php" style="display: flex; gap: 0.75rem; flex: 1; min-width: 280px; margin: 0;">
+                                    <input type="hidden" name="action" value="resolve_lost_item">
+                                    <input type="hidden" name="item_id" value="<?= $selectedItem['ItemID'] ?>">
+                                    <input type="text" name="resolution_notes" class="form-control" placeholder="Resolution notes (e.g. Handed back to student in UB building)" style="flex: 1; margin-bottom: 0;">
+                                    <button type="submit" class="btn btn-primary" style="background: #15803d; border-color: #15803d; width: auto; white-space: nowrap;">
+                                        ✓ Mark Returned
+                                    </button>
+                                </form>
+                            <?php endif; ?>
+                            <form method="POST" action="api_actions.php" style="margin: 0;" onsubmit="return confirm('Permanently remove this lost & found report?');">
+                                <input type="hidden" name="action" value="admin_delete_lost_item">
+                                <input type="hidden" name="item_id" value="<?= $selectedItem['ItemID'] ?>">
+                                <button type="submit" class="btn btn-danger" style="white-space: nowrap;">
+                                    🗑️ Remove Report
+                                </button>
+                            </form>
+                        </div>
                     </div>
                 <?php endif; ?>
 

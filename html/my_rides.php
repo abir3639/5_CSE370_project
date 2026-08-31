@@ -53,6 +53,9 @@ $rideQuery = "
         du.UniversityVerified AS DriverVerified,
         du.RatingAverage AS DriverRating,
         rp.ArrivalStatus AS MyArrivalStatus,
+        rp.PaymentStatus AS MyPaymentStatus,
+        rp.PaidAmount AS MyPaidAmount,
+        rp.PaymentMethod AS MyPaymentMethod,
         (SELECT COUNT(*) FROM `RideParticipant` WHERE RideID = r.RideID AND Role = 'Passenger') AS TotalPassengers
     FROM `Ride` r
     LEFT JOIN `RideParticipant` rp ON r.RideID = rp.RideID AND rp.UserID = ?
@@ -61,11 +64,11 @@ $rideQuery = "
 ";
 
 if ($activeTab === 'upcoming') {
-    $rideQuery .= " AND r.Status IN ('Open', 'Full', 'Confirmed') AND (r.RideDate > CURDATE() OR (r.RideDate = CURDATE() AND r.DepartureTime > CURTIME()))";
+    $rideQuery .= " AND r.Status IN ('Open', 'Full', 'Confirmed') AND (rp.ArrivalStatus IS NULL OR rp.ArrivalStatus != 'Reached') AND (r.RideDate > CURDATE() OR (r.RideDate = CURDATE() AND r.DepartureTime > CURTIME()))";
 } elseif ($activeTab === 'active') {
-    $rideQuery .= " AND (r.Status = 'In Progress' OR (r.Status IN ('Open', 'Full', 'Confirmed') AND r.RideDate = CURDATE() AND r.DepartureTime <= CURTIME()))";
+    $rideQuery .= " AND r.Status NOT IN ('Completed', 'Cancelled') AND (rp.ArrivalStatus IS NULL OR rp.ArrivalStatus != 'Reached') AND (r.Status = 'In Progress' OR r.RideDate < CURDATE() OR (r.RideDate = CURDATE() AND r.DepartureTime <= CURTIME()))";
 } elseif ($activeTab === 'completed') {
-    $rideQuery .= " AND r.Status = 'Completed'";
+    $rideQuery .= " AND (r.Status = 'Completed' OR rp.ArrivalStatus = 'Reached') AND r.Status != 'Cancelled'";
 } elseif ($activeTab === 'cancelled') {
     $rideQuery .= " AND r.Status = 'Cancelled'";
 }
@@ -79,7 +82,7 @@ $userRides = $stmt->fetchAll();
 // Helper to fetch participant details for a ride
 function get_ride_participants($pdo, $rideId) {
     $stmt = $pdo->prepare("
-        SELECT u.UserID, u.Name, u.UniversityVerified, rp.Role, rp.ArrivalStatus
+        SELECT u.UserID, u.Name, u.UniversityVerified, rp.Role, rp.ArrivalStatus, rp.PaymentStatus, rp.PaidAmount, rp.PaymentMethod
         FROM `RideParticipant` rp
         JOIN `User` u ON rp.UserID = u.UserID
         WHERE rp.RideID = ?
@@ -202,37 +205,54 @@ function get_ride_participants($pdo, $rideId) {
             <div style="display: flex; flex-direction: column; gap: 1.25rem;">
                 <?php foreach ($userRides as $ride): 
                     $participants = get_ride_participants($pdo, $ride['RideID']);
+                    $isCompletedOrReached = ($ride['Status'] === 'Completed' || $ride['MyArrivalStatus'] === 'Reached');
                 ?>
                     <div class="card" style="margin-bottom: 0;">
                         
-                        <!-- Arrival Confirmation Prompt for Active / Departed Rides -->
-                        <?php if (($activeTab === 'active' || $ride['Status'] === 'In Progress' || ($ride['RideDate'] === date('Y-m-d') && $ride['DepartureTime'] <= date('H:i:s'))) && $ride['Status'] !== 'Completed' && $ride['Status'] !== 'Cancelled'): ?>
-                            <div class="arrival-prompt-box">
-                                <div class="arrival-prompt-content">
-                                    <h4>📍 Have you reached your destination?</h4>
-                                    <p>Confirm your arrival independently so the ride can be marked complete and ratings can be submitted.</p>
-                                    <p style="margin-top: 4px; font-size: 0.8rem; font-weight: 600;">
-                                        Your current arrival status: 
-                                        <span style="color: <?= $ride['MyArrivalStatus'] === 'Reached' ? 'var(--success)' : '#d97706' ?>">
-                                            <?= $ride['MyArrivalStatus'] === 'Reached' ? '✅ Reached' : '⏳ Pending confirmation' ?>
-                                        </span>
-                                    </p>
+                        <!-- Arrival / End Ride Prompt for Active / Departed Rides -->
+                        <?php if (!$isCompletedOrReached && $ride['Status'] !== 'Cancelled'): ?>
+                            <?php if ($ride['UserRole'] === 'Driver'): ?>
+                                <div class="arrival-prompt-box">
+                                    <div class="arrival-prompt-content">
+                                        <h4>🏁 Have you reached the destination?</h4>
+                                        <p>End the ride once you have arrived. This will mark the trip as Completed and invite all riders to rate their commute.</p>
+                                    </div>
+                                    <div class="arrival-actions">
+                                        <form method="POST" action="api_actions.php" onsubmit="return confirm('End this ride and mark as Reached?');">
+                                            <input type="hidden" name="action" value="driver_end_ride">
+                                            <input type="hidden" name="ride_id" value="<?= $ride['RideID'] ?>">
+                                            <button type="submit" class="btn btn-success">🏁 Yes, End Ride</button>
+                                        </form>
+                                    </div>
                                 </div>
-                                <div class="arrival-actions">
-                                    <form method="POST" action="api_actions.php">
-                                        <input type="hidden" name="action" value="confirm_arrival">
-                                        <input type="hidden" name="ride_id" value="<?= $ride['RideID'] ?>">
-                                        <input type="hidden" name="arrival_status" value="Reached">
-                                        <button type="submit" class="btn btn-success">Yes, I reached</button>
-                                    </form>
-                                    <form method="POST" action="api_actions.php">
-                                        <input type="hidden" name="action" value="confirm_arrival">
-                                        <input type="hidden" name="ride_id" value="<?= $ride['RideID'] ?>">
-                                        <input type="hidden" name="arrival_status" value="Not Reached">
-                                        <button type="submit" class="btn btn-secondary">Not yet</button>
-                                    </form>
+                            <?php else: ?>
+                                <div class="arrival-prompt-box">
+                                    <div class="arrival-prompt-content">
+                                        <h4>📍 Have you reached your destination?</h4>
+                                        <p>Confirm your arrival so this trip moves to your Completed rides and you can rate your driver.</p>
+                                        <p style="margin-top: 4px; font-size: 0.8rem; font-weight: 600;">
+                                            Your arrival status: 
+                                            <span style="color: <?= $ride['MyArrivalStatus'] === 'Reached' ? 'var(--success)' : '#d97706' ?>">
+                                                <?= $ride['MyArrivalStatus'] === 'Reached' ? '✅ Reached' : '⏳ Pending confirmation' ?>
+                                            </span>
+                                        </p>
+                                    </div>
+                                    <div class="arrival-actions">
+                                        <form method="POST" action="api_actions.php">
+                                            <input type="hidden" name="action" value="confirm_arrival">
+                                            <input type="hidden" name="ride_id" value="<?= $ride['RideID'] ?>">
+                                            <input type="hidden" name="arrival_status" value="Reached">
+                                            <button type="submit" class="btn btn-success">✅ Yes, I reached</button>
+                                        </form>
+                                        <form method="POST" action="api_actions.php">
+                                            <input type="hidden" name="action" value="confirm_arrival">
+                                            <input type="hidden" name="ride_id" value="<?= $ride['RideID'] ?>">
+                                            <input type="hidden" name="arrival_status" value="Not Reached">
+                                            <button type="submit" class="btn btn-secondary">Not yet</button>
+                                        </form>
+                                    </div>
                                 </div>
-                            </div>
+                            <?php endif; ?>
                         <?php endif; ?>
 
                         <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;">
@@ -244,6 +264,22 @@ function get_ride_participants($pdo, $rideId) {
                                     <span class="meta-chip">
                                         Status: <strong><?= htmlspecialchars($ride['Status']) ?></strong>
                                     </span>
+                                    <?php if ($ride['MyArrivalStatus'] === 'Reached'): ?>
+                                        <span class="meta-chip" style="background: #ecfdf5; color: #065f46; font-weight: 700;">
+                                            ✅ Reached
+                                        </span>
+                                    <?php endif; ?>
+                                    <?php if ($ride['UserRole'] === 'Passenger' && floatval($ride['SharedCost']) > 0): ?>
+                                        <?php if (($ride['MyPaymentStatus'] ?? 'Unpaid') === 'Paid'): ?>
+                                            <span class="meta-chip" style="background: #ecfdf5; color: #15803d; font-weight: 700;">
+                                                💳 Fare Paid (৳<?= number_format(floatval($ride['MyPaidAmount'] ?: $ride['SharedCost']), 0) ?>)
+                                            </span>
+                                        <?php else: ?>
+                                            <span class="meta-chip" style="background: #fef3c7; color: #92400e; font-weight: 600;">
+                                                ⏳ Fare Unpaid (৳<?= number_format(floatval($ride['SharedCost']), 0) ?>)
+                                            </span>
+                                        <?php endif; ?>
+                                    <?php endif; ?>
                                     <span class="meta-chip">
                                         📅 <?= format_ride_date($ride['RideDate']) ?> · ⏰ <?= format_time_12h($ride['DepartureTime']) ?>
                                     </span>
@@ -259,6 +295,36 @@ function get_ride_participants($pdo, $rideId) {
                             </div>
 
                             <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                                <?php if ($ride['UserRole'] === 'Passenger' && floatval($ride['SharedCost']) > 0 && ($ride['MyPaymentStatus'] ?? 'Unpaid') !== 'Paid' && $ride['Status'] !== 'Cancelled'): ?>
+                                    <form method="POST" action="api_actions.php" style="margin: 0;">
+                                        <input type="hidden" name="action" value="make_payment">
+                                        <input type="hidden" name="ride_id" value="<?= $ride['RideID'] ?>">
+                                        <input type="hidden" name="payment_method" value="bKash">
+                                        <input type="hidden" name="redirect" value="my_rides.php?tab=<?= htmlspecialchars($activeTab) ?>">
+                                        <button type="submit" class="btn btn-primary btn-sm" style="background: #0284c7; border-color: #0284c7;">
+                                            💳 Pay ৳<?= number_format($ride['SharedCost'], 0) ?>
+                                        </button>
+                                    </form>
+                                <?php endif; ?>
+
+                                <?php if ($ride['UserRole'] === 'Driver' && $ride['Status'] !== 'Completed' && $ride['Status'] !== 'Cancelled'): ?>
+                                    <form method="POST" action="api_actions.php" onsubmit="return confirm('End this ride and mark as Reached?');" style="margin: 0;">
+                                        <input type="hidden" name="action" value="driver_end_ride">
+                                        <input type="hidden" name="ride_id" value="<?= $ride['RideID'] ?>">
+                                        <button type="submit" class="btn btn-success btn-sm">🏁 End Ride</button>
+                                    </form>
+                                    <a href="edit_ride.php?id=<?= $ride['RideID'] ?>" class="btn btn-primary btn-sm">
+                                        ✏️ Edit
+                                    </a>
+                                <?php elseif ($ride['UserRole'] === 'Passenger' && $ride['Status'] !== 'Completed' && $ride['Status'] !== 'Cancelled' && $ride['MyArrivalStatus'] !== 'Reached'): ?>
+                                    <form method="POST" action="api_actions.php" style="margin: 0;">
+                                        <input type="hidden" name="action" value="confirm_arrival">
+                                        <input type="hidden" name="ride_id" value="<?= $ride['RideID'] ?>">
+                                        <input type="hidden" name="arrival_status" value="Reached">
+                                        <button type="submit" class="btn btn-success btn-sm">📍 Reached</button>
+                                    </form>
+                                <?php endif; ?>
+
                                 <a href="ride_details.php?id=<?= $ride['RideID'] ?>" class="btn btn-secondary btn-sm">
                                     Ride Details
                                 </a>
@@ -266,9 +332,9 @@ function get_ride_participants($pdo, $rideId) {
                                     🔍 Lost & Found
                                 </a>
 
-                                <?php if ($ride['Status'] === 'Completed'): ?>
+                                <?php if ($isCompletedOrReached): ?>
                                     <a href="rate.php?ride_id=<?= $ride['RideID'] ?>" class="btn btn-accent btn-sm">
-                                        ⭐️ Rate Participants
+                                        ⭐️ Rate <?= $ride['UserRole'] === 'Driver' ? 'Passengers' : 'Driver' ?>
                                     </a>
                                 <?php endif; ?>
                             </div>
@@ -278,16 +344,28 @@ function get_ride_participants($pdo, $rideId) {
                         <?php if (!empty($participants)): ?>
                             <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
                                 <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.5rem;">
-                                    Ride Participants & Arrival Status:
+                                    Ride Participants, Arrival & Payment Status:
                                 </div>
                                 <div style="display: flex; flex-wrap: wrap; gap: 0.75rem;">
                                     <?php foreach ($participants as $pt): ?>
-                                        <div style="background: #f8fafc; border: 1px solid var(--border-color); padding: 0.4rem 0.75rem; border-radius: 6px; font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem;">
+                                        <div style="background: #f8fafc; border: 1px solid var(--border-color); padding: 0.4rem 0.75rem; border-radius: 6px; font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
                                             <strong><?= htmlspecialchars($pt['Name']) ?></strong> 
                                             <span style="color: var(--text-muted); font-size: 0.75rem;">(<?= $pt['Role'] ?>)</span>:
                                             <span style="color: <?= $pt['ArrivalStatus'] === 'Reached' ? 'var(--success)' : '#d97706' ?>; font-weight: 600;">
                                                 <?= $pt['ArrivalStatus'] === 'Reached' ? '✓ Reached' : '⏳ ' . $pt['ArrivalStatus'] ?>
                                             </span>
+                                            <?php if ($pt['Role'] === 'Passenger' && floatval($ride['SharedCost']) > 0): ?>
+                                                <span style="color: var(--border-color);">|</span>
+                                                <?php if (($pt['PaymentStatus'] ?? 'Unpaid') === 'Paid'): ?>
+                                                    <span style="color: #15803d; font-weight: 700; font-size: 0.8rem;">
+                                                        💳 Paid by <?= htmlspecialchars($pt['Name']) ?>
+                                                    </span>
+                                                <?php else: ?>
+                                                    <span style="color: #d97706; font-size: 0.8rem; font-weight: 600;">
+                                                        ⏳ Unpaid
+                                                    </span>
+                                                <?php endif; ?>
+                                            <?php endif; ?>
                                         </div>
                                     <?php endforeach; ?>
                                 </div>

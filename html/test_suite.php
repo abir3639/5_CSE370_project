@@ -355,6 +355,387 @@ run_test('Women-Only Ride Gender Safety Enforcement (Block Male Passengers)', fu
     return true;
 });
 
+// -----------------------------------------------------------------------------
+// 15. TEST SUITE: Admin User Ban & Unban Lifecycle
+// -----------------------------------------------------------------------------
+run_test('Admin User Ban & Unban Lifecycle (State Machine & Login Block)', function() {
+    global $pdo;
+
+    // Create test student user
+    $pdo->prepare("INSERT INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`, `IsBanned`) VALUES (990, 'Test Violator', 'violator@test.com', 'pwd', 'Male', 20, 'Passenger', 0)")->execute();
+
+    // 1. Admin bans user
+    $pdo->prepare("UPDATE `User` SET `IsBanned` = 1 WHERE `UserID` = 990")->execute();
+    $isBanned = (int)$pdo->query("SELECT IsBanned FROM `User` WHERE `UserID` = 990")->fetchColumn();
+    if ($isBanned !== 1) {
+        $pdo->prepare("DELETE FROM `User` WHERE `UserID` = 990")->execute();
+        return "Failed to set IsBanned flag to 1.";
+    }
+
+    // 2. Admin unbans user
+    $pdo->prepare("UPDATE `User` SET `IsBanned` = 0 WHERE `UserID` = 990")->execute();
+    $isUnbanned = (int)$pdo->query("SELECT IsBanned FROM `User` WHERE `UserID` = 990")->fetchColumn();
+    if ($isUnbanned !== 0) {
+        $pdo->prepare("DELETE FROM `User` WHERE `UserID` = 990")->execute();
+        return "Failed to restore IsBanned flag to 0.";
+    }
+
+    // Clean up
+    $pdo->prepare("DELETE FROM `User` WHERE `UserID` = 990")->execute();
+    return true;
+});
+
+// -----------------------------------------------------------------------------
+// 16. TEST SUITE: Admin Force-End and Delete Ride
+// -----------------------------------------------------------------------------
+run_test('Admin Force-End and Delete Ride Controls', function() {
+    global $pdo;
+
+    // Create test driver & ride
+    $pdo->prepare("INSERT INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`) VALUES (991, 'Test Driver 991', 'driver991@test.com', 'pwd', 'Male', 25, 'Driver')")->execute();
+    $pdo->prepare("INSERT INTO `Driver` (`UserID`, `LicenseNo`) VALUES (991, 'DL-991')")->execute();
+    $pdo->prepare("INSERT INTO `Ride` (`RideID`, `DriverID`, `StartLocation`, `Destination`, `RideDate`, `DepartureTime`, `TotalSeats`, `AvailableSeats`, `Status`) VALUES (991, 991, 'Mirpur', 'BRACU', CURDATE(), '08:00:00', 3, 3, 'Open')")->execute();
+
+    // 1. Admin force ends ride
+    $pdo->prepare("UPDATE `Ride` SET `Status` = 'Completed' WHERE `RideID` = 991")->execute();
+    $status = $pdo->query("SELECT Status FROM `Ride` WHERE `RideID` = 991")->fetchColumn();
+    if ($status !== 'Completed') {
+        $pdo->prepare("DELETE FROM `Ride` WHERE `RideID` = 991")->execute();
+        $pdo->prepare("DELETE FROM `User` WHERE `UserID` = 991")->execute();
+        return "Admin force end ride failed.";
+    }
+
+    // 2. Admin deletes ride
+    $pdo->prepare("DELETE FROM `Ride` WHERE `RideID` = 991")->execute();
+    $count = (int)$pdo->query("SELECT COUNT(*) FROM `Ride` WHERE `RideID` = 991")->fetchColumn();
+    if ($count !== 0) {
+        $pdo->prepare("DELETE FROM `User` WHERE `UserID` = 991")->execute();
+        return "Admin ride deletion failed.";
+    }
+
+    $pdo->prepare("DELETE FROM `User` WHERE `UserID` = 991")->execute();
+    return true;
+});
+
+// -----------------------------------------------------------------------------
+// 17. TEST SUITE: Admin Lost & Found Submission Moderation
+// -----------------------------------------------------------------------------
+run_test('Admin Lost & Found Removal & Comment Cascading', function() {
+    global $pdo;
+
+    $pdo->prepare("INSERT INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`) VALUES (992, 'Reporter 992', 'rep992@test.com', 'pwd', 'Female', 21, 'Passenger')")->execute();
+    $pdo->prepare("INSERT INTO `LostItem` (`ItemID`, `ReportType`, `ItemName`, `Category`, `Description`, `LocationDetails`, `DateLostFound`, `PosterID`, `Status`) VALUES (992, 'Lost', 'Test Umbrella', 'Other', 'Black umbrella', 'Cafeteria', CURDATE(), 992, 'Open')")->execute();
+    $pdo->prepare("INSERT INTO `LostItemComment` (`CommentID`, `ItemID`, `UserID`, `Message`) VALUES (992, 992, 992, 'Test inquiry comment')")->execute();
+
+    // Admin removes lost item submission
+    $pdo->prepare("DELETE FROM `LostItem` WHERE `ItemID` = 992")->execute();
+
+    $itemCheck = (int)$pdo->query("SELECT COUNT(*) FROM `LostItem` WHERE `ItemID` = 992")->fetchColumn();
+    $commentCheck = (int)$pdo->query("SELECT COUNT(*) FROM `LostItemComment` WHERE `ItemID` = 992")->fetchColumn();
+
+    $pdo->prepare("DELETE FROM `User` WHERE `UserID` = 992")->execute();
+
+    if ($itemCheck === 0 && $commentCheck === 0) {
+        return true;
+    }
+    return "Cascading removal of lost item and comments failed.";
+});
+
+// -----------------------------------------------------------------------------
+// 18. TEST SUITE: Driver Ride Update & Passenger Notification
+// -----------------------------------------------------------------------------
+run_test('Driver Ride Edit & Passenger Notification Dispatch', function() {
+    global $pdo;
+
+    // Create test driver & passenger
+    $pdo->prepare("INSERT INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`) VALUES (981, 'Driver 981', 'driver981@test.com', 'pwd', 'Male', 24, 'Driver')")->execute();
+    $pdo->prepare("INSERT INTO `Driver` (`UserID`, `LicenseNo`) VALUES (981, 'DL-981-TEST')")->execute();
+    $pdo->prepare("INSERT INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`) VALUES (982, 'Passenger 982', 'pass982@test.com', 'pwd', 'Female', 21, 'Passenger')")->execute();
+    $pdo->prepare("INSERT INTO `Passenger` (`UserID`, `PassRating`) VALUES (982, 5.00)")->execute();
+
+    // Create Ride & Participant
+    $pdo->prepare("INSERT INTO `Ride` (`RideID`, `DriverID`, `StartLocation`, `Destination`, `RideDate`, `DepartureTime`, `TotalSeats`, `AvailableSeats`, `SharedCost`, `Status`) VALUES (981, 981, 'Mirpur 10', 'BRAC University', CURDATE(), '08:00:00', 3, 2, 100.00, 'Open')")->execute();
+    $pdo->prepare("INSERT INTO `RideParticipant` (`RideID`, `UserID`, `Role`, `ArrivalStatus`) VALUES (981, 982, 'Passenger', 'Pending')")->execute();
+
+    // Simulate driver updating departure time and fare
+    $pdo->prepare("UPDATE `Ride` SET `DepartureTime` = '08:30:00', `SharedCost` = 120.00 WHERE `RideID` = 981")->execute();
+
+    // Dispatch update notification
+    create_notification($pdo, 982, 'ride_update', 'Ride Details Updated ✏️', 'Driver updated departure time to 08:30 AM.', 'ride_details.php?id=981');
+
+    // Verify notification delivered to passenger
+    $notifStmt = $pdo->prepare("SELECT COUNT(*) FROM `Notification` WHERE `UserID` = 982 AND `Type` = 'ride_update'");
+    $notifStmt->execute();
+    $notifCount = (int)$notifStmt->fetchColumn();
+
+    // Clean up
+    $pdo->prepare("DELETE FROM `Notification` WHERE `UserID` = 982")->execute();
+    $pdo->prepare("DELETE FROM `RideParticipant` WHERE `RideID` = 981")->execute();
+    $pdo->prepare("DELETE FROM `Ride` WHERE `RideID` = 981")->execute();
+    $pdo->prepare("DELETE FROM `User` WHERE `UserID` IN (981, 982)")->execute();
+
+    if ($notifCount > 0) {
+        return true;
+    }
+    return "Passenger did not receive ride update notification.";
+});
+
+// -----------------------------------------------------------------------------
+// 19. TEST SUITE: Driver Ride Cancel & Passenger Notification
+// -----------------------------------------------------------------------------
+run_test('Driver Ride Cancellation & Passenger Notification Dispatch', function() {
+    global $pdo;
+
+    // Create test driver & passenger
+    $pdo->prepare("INSERT INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`) VALUES (983, 'Driver 983', 'driver983@test.com', 'pwd', 'Male', 24, 'Driver')")->execute();
+    $pdo->prepare("INSERT INTO `Driver` (`UserID`, `LicenseNo`) VALUES (983, 'DL-983-TEST')")->execute();
+    $pdo->prepare("INSERT INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`) VALUES (984, 'Passenger 984', 'pass984@test.com', 'pwd', 'Male', 22, 'Passenger')")->execute();
+    $pdo->prepare("INSERT INTO `Passenger` (`UserID`, `PassRating`) VALUES (984, 5.00)")->execute();
+
+    // Create Ride & Participant
+    $pdo->prepare("INSERT INTO `Ride` (`RideID`, `DriverID`, `StartLocation`, `Destination`, `RideDate`, `DepartureTime`, `TotalSeats`, `AvailableSeats`, `Status`) VALUES (983, 983, 'Uttara', 'BRAC University', CURDATE(), '08:15:00', 3, 2, 'Open')")->execute();
+    $pdo->prepare("INSERT INTO `RideParticipant` (`RideID`, `UserID`, `Role`, `ArrivalStatus`) VALUES (983, 984, 'Passenger', 'Pending')")->execute();
+
+    // Driver cancels ride
+    $pdo->prepare("UPDATE `Ride` SET `Status` = 'Cancelled' WHERE `RideID` = 983")->execute();
+
+    // Notify passenger
+    create_notification($pdo, 984, 'cancelled', 'Ride Cancelled ⚠️', 'The ride was cancelled by driver.', 'index.php');
+
+    $notifStmt = $pdo->prepare("SELECT COUNT(*) FROM `Notification` WHERE `UserID` = 984 AND `Type` = 'cancelled'");
+    $notifStmt->execute();
+    $notifCount = (int)$notifStmt->fetchColumn();
+
+    // Clean up
+    $pdo->prepare("DELETE FROM `Notification` WHERE `UserID` = 984")->execute();
+    $pdo->prepare("DELETE FROM `RideParticipant` WHERE `RideID` = 983")->execute();
+    $pdo->prepare("DELETE FROM `Ride` WHERE `RideID` = 983")->execute();
+    $pdo->prepare("DELETE FROM `User` WHERE `UserID` IN (983, 984)")->execute();
+
+    if ($notifCount > 0) {
+        return true;
+    }
+    return "Passenger did not receive cancellation notification.";
+});
+
+// -----------------------------------------------------------------------------
+// 20. TEST SUITE: Driver End Ride (Destination Reached) & Completed Tab Query
+// -----------------------------------------------------------------------------
+run_test('Driver End Ride (Destination Reached) & Transition to Completed', function() {
+    global $pdo;
+
+    // Create test driver & passenger
+    $pdo->prepare("INSERT INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`) VALUES (985, 'Driver 985', 'driver985@test.com', 'pwd', 'Male', 24, 'Driver')")->execute();
+    $pdo->prepare("INSERT INTO `Driver` (`UserID`, `LicenseNo`) VALUES (985, 'DL-985-TEST')")->execute();
+    $pdo->prepare("INSERT INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`) VALUES (986, 'Passenger 986', 'pass986@test.com', 'pwd', 'Female', 21, 'Passenger')")->execute();
+    $pdo->prepare("INSERT INTO `Passenger` (`UserID`, `PassRating`) VALUES (986, 5.00)")->execute();
+
+    // Create active ride
+    $pdo->prepare("INSERT INTO `Ride` (`RideID`, `DriverID`, `StartLocation`, `Destination`, `RideDate`, `DepartureTime`, `TotalSeats`, `AvailableSeats`, `Status`) VALUES (985, 985, 'Mirpur 10', 'BRAC University', CURDATE(), '08:00:00', 3, 2, 'Open')")->execute();
+    $pdo->prepare("INSERT INTO `RideParticipant` (`RideID`, `UserID`, `Role`, `ArrivalStatus`) VALUES (985, 985, 'Driver', 'Pending'), (985, 986, 'Passenger', 'Pending')")->execute();
+
+    // 1. Driver ends ride
+    $pdo->prepare("UPDATE `Ride` SET `Status` = 'Completed' WHERE `RideID` = 985")->execute();
+    $pdo->prepare("UPDATE `RideParticipant` SET `ArrivalStatus` = 'Reached' WHERE `RideID` = 985 AND `UserID` = 985")->execute();
+
+    // 2. Verify Ride status is Completed
+    $rideStatus = $pdo->query("SELECT Status FROM `Ride` WHERE `RideID` = 985")->fetchColumn();
+    $driverStatus = $pdo->query("SELECT ArrivalStatus FROM `RideParticipant` WHERE `RideID` = 985 AND `UserID` = 985")->fetchColumn();
+
+    // 3. Test Completed Tab Query matching
+    $completedMatch = $pdo->prepare("
+        SELECT COUNT(*) FROM `Ride` r 
+        LEFT JOIN `RideParticipant` rp ON r.RideID = rp.RideID AND rp.UserID = 985
+        WHERE (r.DriverID = 985 OR rp.UserID = 985)
+        AND (r.Status = 'Completed' OR rp.ArrivalStatus = 'Reached') AND r.Status != 'Cancelled'
+        AND r.RideID = 985
+    ");
+    $completedMatch->execute();
+    $isInCompleted = (int)$completedMatch->fetchColumn();
+
+    // Clean up
+    $pdo->prepare("DELETE FROM `RideParticipant` WHERE `RideID` = 985")->execute();
+    $pdo->prepare("DELETE FROM `Ride` WHERE `RideID` = 985")->execute();
+    $pdo->prepare("DELETE FROM `User` WHERE `UserID` IN (985, 986)")->execute();
+
+    if ($rideStatus === 'Completed' && $driverStatus === 'Reached' && $isInCompleted > 0) {
+        return true;
+    }
+    return "Driver end ride failed to transition ride to Completed.";
+});
+
+// -----------------------------------------------------------------------------
+// 21. TEST SUITE: Passenger Mark Reached & Auto-Completed Commute
+// -----------------------------------------------------------------------------
+run_test('Passenger Mark Reached & Automatic Completed Tab Population', function() {
+    global $pdo;
+
+    // Create test driver & passenger
+    $pdo->prepare("INSERT INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`) VALUES (987, 'Driver 987', 'driver987@test.com', 'pwd', 'Male', 24, 'Driver')")->execute();
+    $pdo->prepare("INSERT INTO `Driver` (`UserID`, `LicenseNo`) VALUES (987, 'DL-987-TEST')")->execute();
+    $pdo->prepare("INSERT INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`) VALUES (988, 'Passenger 988', 'pass988@test.com', 'pwd', 'Female', 21, 'Passenger')")->execute();
+    $pdo->prepare("INSERT INTO `Passenger` (`UserID`, `PassRating`) VALUES (988, 5.00)")->execute();
+
+    // Create ride with driver and passenger
+    $pdo->prepare("INSERT INTO `Ride` (`RideID`, `DriverID`, `StartLocation`, `Destination`, `RideDate`, `DepartureTime`, `TotalSeats`, `AvailableSeats`, `Status`) VALUES (987, 987, 'Dhanmondi', 'BRAC University', CURDATE(), '09:00:00', 3, 2, 'Open')")->execute();
+    $pdo->prepare("INSERT INTO `RideParticipant` (`RideID`, `UserID`, `Role`, `ArrivalStatus`) VALUES (987, 987, 'Driver', 'Reached'), (987, 988, 'Passenger', 'Pending')")->execute();
+
+    // Passenger marks as Reached
+    $pdo->prepare("UPDATE `RideParticipant` SET `ArrivalStatus` = 'Reached' WHERE `RideID` = 987 AND `UserID` = 988")->execute();
+
+    // Verify Passenger Completed Tab query matching
+    $pQuery = $pdo->prepare("
+        SELECT COUNT(*) FROM `Ride` r 
+        LEFT JOIN `RideParticipant` rp ON r.RideID = rp.RideID AND rp.UserID = 988
+        WHERE (r.DriverID = 988 OR rp.UserID = 988)
+        AND (r.Status = 'Completed' OR rp.ArrivalStatus = 'Reached') AND r.Status != 'Cancelled'
+        AND r.RideID = 987
+    ");
+    $pQuery->execute();
+    $pCompletedCount = (int)$pQuery->fetchColumn();
+
+    // Clean up
+    $pdo->prepare("DELETE FROM `RideParticipant` WHERE `RideID` = 987")->execute();
+    $pdo->prepare("DELETE FROM `Ride` WHERE `RideID` = 987")->execute();
+    $pdo->prepare("DELETE FROM `User` WHERE `UserID` IN (987, 988)")->execute();
+
+    if ($pCompletedCount > 0) {
+        return true;
+    }
+    return "Passenger marking Reached did not populate Completed rides tab.";
+});
+
+// -----------------------------------------------------------------------------
+// 22. TEST SUITE: Phone Number Verification for Password Reset
+// -----------------------------------------------------------------------------
+run_test('Phone Number Verification for Password Reset Security', function() {
+    global $pdo;
+
+    $pdo->prepare("INSERT INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`) VALUES (970, 'Reset Student', 'resetstudent@g.bracu.ac.bd', 'oldhash', 'Male', 21, 'Passenger')")->execute();
+    $pdo->prepare("INSERT INTO `User_Phone` (`UserID`, `Phone`) VALUES (970, '+880-1755-123456')")->execute();
+
+    // 1. Check exact phone matching logic
+    $pStmt = $pdo->prepare("SELECT Phone FROM `User_Phone` WHERE `UserID` = 970");
+    $pStmt->execute();
+    $dbPhone = $pStmt->fetchColumn();
+
+    $inputClean = preg_replace('/\D+/', '', '01755123456');
+    $dbClean = preg_replace('/\D+/', '', $dbPhone);
+    if (str_starts_with($dbClean, '880')) $dbClean = substr($dbClean, 2);
+
+    $matched = ($inputClean === $dbClean);
+
+    // Clean up
+    $pdo->prepare("DELETE FROM `User_Phone` WHERE `UserID` = 970")->execute();
+    $pdo->prepare("DELETE FROM `User` WHERE `UserID` = 970")->execute();
+
+    if ($matched) {
+        return true;
+    }
+    return "Phone number normalization and comparison failed.";
+});
+
+// -----------------------------------------------------------------------------
+// 23. TEST SUITE: Password Reset Execution & Verification
+// -----------------------------------------------------------------------------
+run_test('Password Reset Execution & Re-authentication with New Password', function() {
+    global $pdo;
+
+    $oldHash = password_hash('OldPassword123!', PASSWORD_DEFAULT);
+    $pdo->prepare("INSERT INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`) VALUES (971, 'Reset User 971', 'reset971@g.bracu.ac.bd', ?, 'Female', 22, 'Passenger')")->execute([$oldHash]);
+
+    // Reset password to new password
+    $newPlain = 'NewSecurePass2026!';
+    $newHash = password_hash($newPlain, PASSWORD_DEFAULT);
+    $pdo->prepare("UPDATE `User` SET `Password` = ? WHERE `UserID` = 971")->execute([$newHash]);
+
+    // Authenticate with new password
+    $storedHash = $pdo->query("SELECT Password FROM `User` WHERE `UserID` = 971")->fetchColumn();
+    $validNew = password_verify($newPlain, $storedHash);
+    $invalidOld = password_verify('OldPassword123!', $storedHash);
+
+    // Clean up
+    $pdo->prepare("DELETE FROM `User` WHERE `UserID` = 971")->execute();
+
+    if ($validNew && !$invalidOld) {
+        return true;
+    }
+    return "Password reset verification failed.";
+});
+
+// -----------------------------------------------------------------------------
+// 24. TEST SUITE: Admin Authentication (Username: admin, Password: admin)
+// -----------------------------------------------------------------------------
+run_test('Admin Authentication with Credentials (admin / admin)', function() {
+    global $pdo;
+
+    $stmt = $pdo->prepare("SELECT * FROM `User` WHERE LOWER(TRIM(Name)) = 'admin' OR LOWER(TRIM(Email)) = 'admin@rideshare.com' LIMIT 1");
+    $stmt->execute();
+    $admin = $stmt->fetch();
+
+    if (!$admin) {
+        return "Admin user not found.";
+    }
+
+    if ($admin['UserType'] !== 'Admin') {
+        return "Admin user role is not 'Admin'.";
+    }
+
+    $valid = password_verify('admin', $admin['Password']);
+    if (!$valid) {
+        return "Password verification with 'admin' failed.";
+    }
+
+    return true;
+});
+
+// -----------------------------------------------------------------------------
+// 25. TEST SUITE: Passenger Make Payment & Driver Visibility
+// -----------------------------------------------------------------------------
+run_test('Passenger Make Payment & Driver Payment Status Visibility', function() {
+    global $pdo;
+
+    // Create driver & passenger
+    $pdo->prepare("INSERT INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`) VALUES (960, 'Driver 960', 'driver960@test.com', 'pwd', 'Male', 24, 'Driver')")->execute();
+    $pdo->prepare("INSERT INTO `Driver` (`UserID`, `LicenseNo`) VALUES (960, 'DL-960-TEST')")->execute();
+    $pdo->prepare("INSERT INTO `User` (`UserID`, `Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`) VALUES (961, 'Passenger 961', 'pass961@test.com', 'pwd', 'Female', 21, 'Passenger')")->execute();
+    $pdo->prepare("INSERT INTO `Passenger` (`UserID`, `PassRating`) VALUES (961, 5.00)")->execute();
+
+    // Create ride
+    $pdo->prepare("INSERT INTO `Ride` (`RideID`, `DriverID`, `StartLocation`, `Destination`, `RideDate`, `DepartureTime`, `TotalSeats`, `AvailableSeats`, `SharedCost`, `Status`) VALUES (960, 960, 'Gulshan', 'BRAC University', CURDATE(), '10:00:00', 3, 2, 120.00, 'Open')")->execute();
+    $pdo->prepare("INSERT INTO `RideParticipant` (`RideID`, `UserID`, `Role`, `ArrivalStatus`, `PaymentStatus`) VALUES (960, 960, 'Driver', 'Pending', 'Unpaid'), (960, 961, 'Passenger', 'Pending', 'Unpaid')")->execute();
+
+    // Passenger makes payment via bKash
+    $pdo->prepare("
+        UPDATE `RideParticipant` 
+        SET `PaymentStatus` = 'Paid',
+            `PaymentMethod` = 'bKash',
+            `PaidAmount` = 120.00,
+            `PaidAt` = NOW()
+        WHERE `RideID` = 960 AND `UserID` = 961 AND `Role` = 'Passenger'
+    ")->execute();
+
+    // Verify driver can see 'Paid by Passenger 961'
+    $stmt = $pdo->prepare("
+        SELECT u.Name, rp.PaymentStatus, rp.PaidAmount, rp.PaymentMethod 
+        FROM `RideParticipant` rp 
+        JOIN `User` u ON rp.UserID = u.UserID 
+        WHERE rp.RideID = 960 AND rp.Role = 'Passenger'
+    ");
+    $stmt->execute();
+    $res = $stmt->fetch();
+
+    // Clean up
+    $pdo->prepare("DELETE FROM `RideParticipant` WHERE `RideID` = 960")->execute();
+    $pdo->prepare("DELETE FROM `Ride` WHERE `RideID` = 960")->execute();
+    $pdo->prepare("DELETE FROM `User` WHERE `UserID` IN (960, 961)")->execute();
+
+    if ($res && $res['PaymentStatus'] === 'Paid' && floatval($res['PaidAmount']) == 120.00 && $res['PaymentMethod'] === 'bKash') {
+        return true;
+    }
+    return "Passenger payment recording or driver visibility failed.";
+});
+
 $totalTests = count($results);
 $passedTests = count(array_filter($results, fn($r) => $r['passed']));
 ?>

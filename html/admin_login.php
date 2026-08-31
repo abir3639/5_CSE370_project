@@ -1,45 +1,41 @@
 <?php
 session_start();
-if (isset($_SESSION['user_id'])) { 
-    if (($_SESSION['user_type'] ?? '') === 'Admin') {
-        header('Location: admin.php');
-    } else {
-        header('Location: index.php');
-    }
-    exit; 
+
+if (isset($_SESSION['user_id']) && ($_SESSION['user_type'] ?? '') === 'Admin') {
+    header('Location: admin.php');
+    exit;
 }
 
 require_once 'db.php';
 require_once 'helpers.php';
 $error = '';
-$successMsg = $_SESSION['success_msg'] ?? '';
-unset($_SESSION['success_msg']);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $input = trim($_POST['login_input'] ?? '');
     $password = $_POST['password'] ?? '';
 
     if (empty($input) || empty($password)) {
-        $error = "Please enter both email/username and password.";
+        $error = "Please enter both administrator email/username and password.";
     } else {
-        // Fetch user + driver/passenger details in a single query
         $stmt = $pdo->prepare("
-            SELECT u.*, d.LicenseNo, p.PassRating 
+            SELECT u.*, a.Role AS AdminRole 
             FROM `User` u
-            LEFT JOIN `Driver` d ON u.UserID = d.UserID
-            LEFT JOIN `Passenger` p ON u.UserID = p.UserID
-            WHERE LOWER(TRIM(u.Email)) = LOWER(:email_input) OR LOWER(TRIM(u.Name)) = LOWER(:name_input)
+            LEFT JOIN `Admin` a ON u.AdminID = a.AdminID OR u.Email = a.Email
+            WHERE LOWER(TRIM(u.Email)) = LOWER(:input) OR LOWER(TRIM(u.Name)) = LOWER(:input2)
             LIMIT 1
         ");
         $stmt->execute([
-            'email_input' => $input,
-            'name_input'  => $input
+            'input' => $input,
+            'input2' => $input
         ]);
         $user = $stmt->fetch();
 
         if ($user && password_verify($password, $user['Password'])) {
-            if (!empty($user['IsBanned'])) {
-                $error = "🚫 Your account has been suspended by a platform administrator. Please contact university rideshare support.";
+            // Verify Administrative Role
+            if ($user['UserType'] !== 'Admin') {
+                $error = "🚫 Access Denied: This account does not possess administrative privileges. Please log in through the student/driver portal.";
+            } elseif (!empty($user['IsBanned'])) {
+                $error = "🚫 This administrative account has been suspended.";
             } else {
                 session_regenerate_id(true);
                 $_SESSION['user_id'] = $user['UserID'];
@@ -47,20 +43,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['email'] = $user['Email'];
                 $_SESSION['gender'] = $user['Gender'];
                 $_SESSION['age'] = $user['Age'];
-                $_SESSION['user_type'] = $user['UserType'];
-                $_SESSION['license_no'] = $user['LicenseNo'] ?? '';
-                $_SESSION['pass_rating'] = $user['PassRating'] ?? '5.00';
+                $_SESSION['user_type'] = 'Admin';
+                $_SESSION['admin_role'] = $user['AdminRole'] ?? 'SuperAdmin';
                 $_SESSION['university_verified'] = $user['UniversityVerified'] ?? 0;
 
-                if ($user['UserType'] === 'Admin') {
-                    header('Location: admin.php');
-                } else {
-                    header('Location: index.php');
-                }
+                header('Location: admin.php');
                 exit;
             }
         } else {
-            $error = "Invalid email/username or password. Please try again.";
+            $error = "Invalid administrator credentials. Please verify your email and password.";
         }
     }
 }
@@ -70,55 +61,83 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Log In - BRAC University Rideshare</title>
+    <title>Admin Portal Login - BRAC University Rideshare</title>
     <link rel="stylesheet" href="style.css">
+    <style>
+        .admin-auth-badge {
+            background: linear-gradient(135deg, #1e3a8a, #1e40af);
+            color: #ffffff;
+            width: 64px;
+            height: 64px;
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            margin: 0 auto 1.25rem auto;
+            box-shadow: 0 8px 20px rgba(30, 64, 175, 0.35);
+        }
+        .admin-card-border {
+            border: 2px solid #3b82f6;
+            box-shadow: 0 15px 35px rgba(30, 58, 138, 0.12);
+        }
+        .admin-banner-chip {
+            display: inline-block;
+            background: #dbeafe;
+            color: #1e40af;
+            font-size: 0.75rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            margin-bottom: 0.5rem;
+        }
+    </style>
 </head>
 <body>
-    <?php render_navbar(); ?>
+    <?php render_navbar('admin'); ?>
 
     <div class="auth-page-wrapper">
-        <div class="auth-card-modern">
+        <div class="auth-card-modern admin-card-border">
             
             <div class="auth-header">
-                <div class="auth-badge-icon">
-                    🚗
+                <div class="admin-auth-badge">
+                    🛡️
                 </div>
-                <h1 class="auth-title">Welcome Back</h1>
-                <p class="auth-subtitle">Log in to your BRAC University Rideshare account</p>
+                <div>
+                    <span class="admin-banner-chip">Authorized Staff Only</span>
+                </div>
+                <h1 class="auth-title" style="color: #1e3a8a;">Admin Control Portal</h1>
+                <p class="auth-subtitle">Platform moderation, ride controls, user management & system analytics</p>
             </div>
-
-            <?php if (!empty($successMsg)): ?>
-                <div class="alert alert-success">
-                    <span><?= htmlspecialchars($successMsg) ?></span>
-                </div>
-            <?php endif; ?>
 
             <?php if (!empty($error)): ?>
                 <div class="alert alert-danger">
-                    <svg style="width: 20px; height: 20px; flex-shrink: 0;" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                    <svg style="width: 20px; height: 20px; flex-shrink: 0;" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                    </svg>
                     <span><?= htmlspecialchars($error) ?></span>
                 </div>
             <?php endif; ?>
 
-            <form method="POST" id="mainLoginForm" action="login.php">
+            <form method="POST" action="admin_login.php">
                 
-                <!-- Email or Name Input with Left Icon -->
                 <div class="form-group">
-                    <label for="login_input">University Email or Username</label>
+                    <label for="login_input">Administrator Email or Username</label>
                     <div class="input-icon-wrapper">
                         <svg class="input-icon-left" viewBox="0 0 20 20" fill="currentColor">
                             <path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884z" />
                             <path d="M18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z" />
                         </svg>
-                        <input type="text" id="login_input" name="login_input" class="form-control has-icon" placeholder="name@g.bracu.ac.bd" value="<?= htmlspecialchars($_POST['login_input'] ?? '') ?>" required autofocus>
+                        <input type="text" id="login_input" name="login_input" class="form-control has-icon" placeholder="admin or admin@rideshare.com" value="<?= htmlspecialchars($_POST['login_input'] ?? '') ?>" required autofocus>
                     </div>
                 </div>
 
-                <!-- Password Input with Left Icon and Right Eye Toggle -->
                 <div class="form-group">
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.45rem;">
-                        <label for="password" style="margin-bottom: 0;">Password</label>
-                        <a href="forgot_password.php" style="font-size: 0.82rem; color: var(--accent); font-weight: 600; text-decoration: none;">Forgot Password?</a>
+                        <label for="password" style="margin-bottom: 0;">Admin Master Password</label>
+                        <a href="forgot_password.php" style="font-size: 0.82rem; color: #1e40af; font-weight: 600; text-decoration: none;">Forgot Password?</a>
                     </div>
                     <div class="input-icon-wrapper">
                         <svg class="input-icon-left" viewBox="0 0 20 20" fill="currentColor">
@@ -134,23 +153,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                 </div>
 
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; font-size: 0.85rem;">
-                    <label style="display: flex; align-items: center; gap: 0.45rem; cursor: pointer; color: var(--text-muted); font-weight: 500;">
-                        <input type="checkbox" name="remember" checked style="accent-color: var(--accent); width: 16px; height: 16px;">
-                        Remember my session
-                    </label>
-                </div>
-
-                <button type="submit" class="btn btn-primary" style="width: 100%; padding: 0.85rem; font-size: 1rem;">
-                    Sign In to Rideshare
+                <button type="submit" class="btn btn-primary" style="width: 100%; padding: 0.85rem; font-size: 1rem; background: linear-gradient(135deg, #1e3a8a, #2563eb); border: none;">
+                    🔐 Unlock Admin Control Panel
                 </button>
             </form>
 
-            <div class="auth-footer" style="margin-top: 2rem; font-size: 0.95rem; display: flex; flex-direction: column; gap: 0.75rem; align-items: center;">
-                <div>New to the platform? <a href="register.php" style="font-weight: 700; color: var(--accent);">Create an Account</a></div>
-                <div style="font-size: 0.85rem; color: var(--text-muted); padding-top: 0.5rem; border-top: 1px solid var(--border-color); width: 100%; text-align: center;">
-                    Platform Administrator? <a href="admin_login.php" style="font-weight: 700; color: #1e40af;">🛡️ Access Admin Portal</a>
-                </div>
+            <div class="auth-footer" style="margin-top: 1.75rem; font-size: 0.9rem;">
+                Looking for student or driver login? <br>
+                <a href="login.php" style="font-weight: 700; color: var(--accent);">← Return to Regular User Portal</a>
             </div>
 
         </div>

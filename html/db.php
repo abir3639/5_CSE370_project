@@ -55,6 +55,7 @@ try {
             `AdminID` INT NULL,
             `ProfileImage` VARCHAR(255) NULL,
             `UniversityVerified` TINYINT(1) DEFAULT 0,
+            `IsBanned` TINYINT(1) DEFAULT 0,
             `RatingAverage` DECIMAL(3,2) DEFAULT 5.00,
             `RatingCount` INT DEFAULT 0,
             `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -224,18 +225,53 @@ try {
     } catch (PDOException $e) {
         // Column already exists
     }
+
+    try {
+        $pdo->exec("ALTER TABLE `User` ADD COLUMN `IsBanned` TINYINT(1) DEFAULT 0 AFTER `UniversityVerified`");
+    } catch (PDOException $e) {
+        // Column already exists
+    }
+
+    try {
+        $pdo->exec("ALTER TABLE `RideParticipant` ADD COLUMN `PaymentStatus` ENUM('Unpaid', 'Paid') NOT NULL DEFAULT 'Unpaid' AFTER `ArrivalStatus`");
+    } catch (PDOException $e) {
+        // Column already exists
+    }
+
+    try {
+        $pdo->exec("ALTER TABLE `RideParticipant` ADD COLUMN `PaymentMethod` VARCHAR(50) NULL AFTER `PaymentStatus`");
+    } catch (PDOException $e) {
+        // Column already exists
+    }
+
+    try {
+        $pdo->exec("ALTER TABLE `RideParticipant` ADD COLUMN `PaidAmount` DECIMAL(10,2) DEFAULT 0.00 AFTER `PaymentMethod`");
+    } catch (PDOException $e) {
+        // Column already exists
+    }
+
+    try {
+        $pdo->exec("ALTER TABLE `RideParticipant` ADD COLUMN `PaidAt` TIMESTAMP NULL AFTER `PaidAmount`");
+    } catch (PDOException $e) {
+        // Column already exists
+    }
     
     $pdo->exec("INSERT IGNORE INTO `Admin` (`AdminID`, `Email`, `Role`) VALUES (1, 'admin@rideshare.com', 'SuperAdmin')");
 
-    $adminUser = $pdo->query("SELECT * FROM `User` WHERE `Email` = 'admin@rideshare.com'")->fetch();
-    $defaultPassword = password_hash('password123', PASSWORD_DEFAULT);
+    $adminHash = password_hash('admin', PASSWORD_DEFAULT);
+    $adminUser = $pdo->query("SELECT * FROM `User` WHERE `Email` = 'admin@rideshare.com' OR `Name` = 'admin'")->fetch();
     if (!$adminUser) {
-        $pdo->prepare("INSERT INTO `User` (`Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`, `AdminID`, `UniversityVerified`) VALUES ('Admin User', 'admin@rideshare.com', ?, 'Other', 30, 'Admin', 1, 0)")
-            ->execute([$defaultPassword]);
+        $pdo->prepare("INSERT INTO `User` (`Name`, `Email`, `Password`, `Gender`, `Age`, `UserType`, `AdminID`, `UniversityVerified`) VALUES ('admin', 'admin@rideshare.com', ?, 'Other', 30, 'Admin', 1, 0)")
+            ->execute([$adminHash]);
+        $newAdminId = $pdo->lastInsertId();
+        $pdo->prepare("INSERT IGNORE INTO `User_Phone` (`UserID`, `Phone`) VALUES (?, '+880-1700-000000')")->execute([$newAdminId]);
     } else {
-        $pdo->prepare("UPDATE `User` SET `Password` = ?, `UserType` = 'Admin', `Name` = 'Admin User' WHERE `Email` = 'admin@rideshare.com'")
-            ->execute([$defaultPassword]);
+        $pdo->prepare("UPDATE `User` SET `Password` = ?, `UserType` = 'Admin', `Name` = 'admin', `Email` = 'admin@rideshare.com' WHERE `UserID` = ?")
+            ->execute([$adminHash, $adminUser['UserID']]);
+        $pdo->prepare("INSERT IGNORE INTO `User_Phone` (`UserID`, `Phone`) VALUES (?, '+880-1700-000000')")->execute([$adminUser['UserID']]);
     }
+
+    $defaultPassword = password_hash('password123', PASSWORD_DEFAULT);
 
     $standardUserCount = $pdo->query("SELECT COUNT(*) FROM `User` WHERE `UserType` != 'Admin'")->fetchColumn();
     if ($standardUserCount == 0) {

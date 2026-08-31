@@ -76,6 +76,22 @@ switch ($action) {
             exit;
         }
 
+        $userRole = $_SESSION['user_type'] ?? 'Passenger';
+        if ($userRole === 'Admin') {
+            $_SESSION['error_msg'] = "🛡️ Administrator accounts cannot join rides as passengers.";
+            header("Location: ride_details.php?id=$rideId");
+            exit;
+        }
+
+        // Check if user is banned
+        $banCheck = $pdo->prepare("SELECT IsBanned FROM `User` WHERE UserID = ?");
+        $banCheck->execute([$currentUserId]);
+        if ($banCheck->fetchColumn()) {
+            $_SESSION['error_msg'] = "Your account is suspended. You cannot request to join rides.";
+            header("Location: ride_details.php?id=$rideId");
+            exit;
+        }
+
         if ((int)$ride['DriverID'] === $currentUserId) {
             $_SESSION['error_msg'] = "You cannot join your own ride as a passenger.";
             header("Location: ride_details.php?id=$rideId");
@@ -314,19 +330,36 @@ switch ($action) {
 
         $pdo->beginTransaction();
         try {
-            $pdo->prepare("UPDATE `Ride` SET `Status` = 'Cancelled' WHERE `RideID` = ?")->execute([$rideId]);
-
-            // Notify all confirmed participants
+            // Notify all confirmed participants & pending requesters
+            $recipients = [];
             $partStmt = $pdo->prepare("SELECT UserID FROM `RideParticipant` WHERE `RideID` = ? AND `Role` = 'Passenger'");
             $partStmt->execute([$rideId]);
-            $passengers = $partStmt->fetchAll(PDO::FETCH_COLUMN);
+            while ($uid = $partStmt->fetchColumn()) {
+                $recipients[] = (int)$uid;
+            }
 
-            foreach ($passengers as $pUid) {
-                create_notification($pdo, $pUid, 'cancelled', 'Ride Cancelled ⚠️', "The ride from {$ride['StartLocation']} to {$ride['Destination']} on {$ride['RideDate']} was cancelled by the driver.", "index.php");
+            $reqStmt = $pdo->prepare("SELECT PassengerID FROM `RideRequest` WHERE `RideID` = ? AND `Status` = 'Pending'");
+            $reqStmt->execute([$rideId]);
+            while ($uid = $reqStmt->fetchColumn()) {
+                if (!in_array((int)$uid, $recipients)) {
+                    $recipients[] = (int)$uid;
+                }
+            }
+
+            $driverName = $_SESSION['name'] ?? 'The driver';
+            foreach ($recipients as $pUid) {
+                create_notification(
+                    $pdo, 
+                    $pUid, 
+                    'cancelled', 
+                    'Ride Cancelled ⚠️', 
+                    "The ride from {$ride['StartLocation']} to {$ride['Destination']} on {$ride['RideDate']} was cancelled by the driver ({$driverName}).", 
+                    "index.php"
+                );
             }
 
             $pdo->commit();
-            $_SESSION['success_msg'] = "Ride has been cancelled.";
+            $_SESSION['success_msg'] = "Ride has been cancelled. " . (count($recipients) > 0 ? count($recipients) . " passenger(s) notified." : "");
         } catch (Exception $e) {
             $pdo->rollBack();
             $_SESSION['error_msg'] = "Error cancelling ride: " . $e->getMessage();
@@ -341,11 +374,30 @@ switch ($action) {
     case 'confirm_arrival':
         $rideId = (int)($_POST['ride_id'] ?? 0);
         $arrivalStatus = ($_POST['arrival_status'] ?? '') === 'Reached' ? 'Reached' : 'Not Reached';
+        $redirect = trim($_POST['redirect'] ?? '');
+
+        // Fetch ride details
+        $rStmt = $pdo->prepare("SELECT * FROM `Ride` WHERE `RideID` = ?");
+        $rStmt->execute([$rideId]);
+        $ride = $rStmt->fetch();
+
+        if (!$ride) {
+            $_SESSION['error_msg'] = "Ride not found.";
+            header('Location: my_rides.php');
+            exit;
+        }
 
         // Check user participation
         $pStmt = $pdo->prepare("SELECT * FROM `RideParticipant` WHERE `RideID` = ? AND `UserID` = ?");
         $pStmt->execute([$rideId, $currentUserId]);
         $participant = $pStmt->fetch();
+
+        if (!$participant && (int)$ride['DriverID'] === $currentUserId) {
+            // Auto-register driver in RideParticipant if missing
+            $pdo->prepare("INSERT INTO `RideParticipant` (`RideID`, `UserID`, `Role`, `ArrivalStatus`, `JoinedAt`) VALUES (?, ?, 'Driver', ?, NOW()) ON DUPLICATE KEY UPDATE ArrivalStatus = ?")
+                ->execute([$rideId, $currentUserId, $arrivalStatus, $arrivalStatus]);
+            $participant = ['Role' => 'Driver', 'ArrivalStatus' => $arrivalStatus];
+        }
 
         if (!$participant) {
             $_SESSION['error_msg'] = "You are not a participant on this ride.";
@@ -356,33 +408,178 @@ switch ($action) {
         $pdo->prepare("UPDATE `RideParticipant` SET `ArrivalStatus` = ? WHERE `RideID` = ? AND `UserID` = ?")
             ->execute([$arrivalStatus, $rideId, $currentUserId]);
 
-        // Check if all participants (or driver) reached to auto-complete ride
-        $allParts = $pdo->prepare("SELECT ArrivalStatus FROM `RideParticipant` WHERE `RideID` = ?");
+        // If driver marks Reached, auto-mark ride as Completed
+        if ($participant['Role'] === 'Driver' && $arrivalStatus === 'Reached') {
+            $pdo->prepare("UPDATE `Ride` SET `Status` = 'Completed' WHERE `RideID` = ?")->execute([$rideId]);
+        }
+
+        // Check if all participants reached or if driver has ended the ride
+        $allParts = $pdo->prepare("SELECT ArrivalStatus, Role, UserID FROM `RideParticipant` WHERE `RideID` = ?");
         $allParts->execute([$rideId]);
-        $statuses = $allParts->fetchAll(PDO::FETCH_COLUMN);
+        $participantsList = $allParts->fetchAll();
 
         $allReached = true;
-        foreach ($statuses as $st) {
-            if ($st !== 'Reached') {
+        foreach ($participantsList as $p) {
+            if ($p['ArrivalStatus'] !== 'Reached') {
                 $allReached = false;
                 break;
             }
         }
 
-        if ($allReached && count($statuses) > 0) {
+        if ($allReached && count($participantsList) > 0) {
             $pdo->prepare("UPDATE `Ride` SET `Status` = 'Completed' WHERE `RideID` = ?")->execute([$rideId]);
-            
-            // Notify all participants to leave a rating!
-            $uStmt = $pdo->prepare("SELECT UserID FROM `RideParticipant` WHERE `RideID` = ?");
-            $uStmt->execute([$rideId]);
-            $uids = $uStmt->fetchAll(PDO::FETCH_COLUMN);
-            foreach ($uids as $u) {
-                create_notification($pdo, $u, 'rate_prompt', 'Rate Your Ride ⭐️', "Your ride has ended! Please take a moment to rate your ride partner.", "ride_details.php?id=$rideId");
-            }
         }
 
-        $_SESSION['success_msg'] = "Arrival status updated: " . $arrivalStatus;
-        header("Location: my_rides.php?tab=active");
+        // If passenger confirmed arrival, notify the driver
+        if ($participant['Role'] === 'Passenger' && $arrivalStatus === 'Reached') {
+            $passengerName = $_SESSION['name'] ?? 'A passenger';
+            create_notification(
+                $pdo,
+                $ride['DriverID'],
+                'passenger_reached',
+                'Passenger Reached Destination 📍',
+                "{$passengerName} has confirmed arrival at the destination for your ride from {$ride['StartLocation']} to {$ride['Destination']}.",
+                "ride_details.php?id=$rideId"
+            );
+        }
+
+        if ($arrivalStatus === 'Reached') {
+            $_SESSION['success_msg'] = "✓ You have confirmed your arrival! The ride is now listed in your Completed rides.";
+            $targetUrl = !empty($redirect) ? $redirect : "my_rides.php?tab=completed";
+        } else {
+            $_SESSION['success_msg'] = "Arrival status updated.";
+            $targetUrl = !empty($redirect) ? $redirect : "my_rides.php?tab=active";
+        }
+
+        header("Location: $targetUrl");
+        exit;
+
+    // -------------------------------------------------------------------------
+    // 7B. DRIVER END RIDE ("Driver Reached Destination & Ended Ride")
+    // -------------------------------------------------------------------------
+    case 'driver_end_ride':
+        $rideId = (int)($_POST['ride_id'] ?? 0);
+        $redirect = trim($_POST['redirect'] ?? '');
+
+        // Fetch ride details
+        $rStmt = $pdo->prepare("SELECT * FROM `Ride` WHERE `RideID` = ? AND `DriverID` = ?");
+        $rStmt->execute([$rideId, $currentUserId]);
+        $ride = $rStmt->fetch();
+
+        if (!$ride) {
+            $_SESSION['error_msg'] = "Ride not found or you are not the driver of this ride.";
+            header('Location: my_rides.php');
+            exit;
+        }
+
+        if ($ride['Status'] === 'Cancelled') {
+            $_SESSION['error_msg'] = "Cannot end a cancelled ride.";
+            header('Location: my_rides.php');
+            exit;
+        }
+
+        $pdo->beginTransaction();
+        try {
+            // Set ride status to Completed
+            $pdo->prepare("UPDATE `Ride` SET `Status` = 'Completed' WHERE `RideID` = ?")->execute([$rideId]);
+
+            // Ensure Driver is recorded as Reached in RideParticipant
+            $pdo->prepare("INSERT INTO `RideParticipant` (`RideID`, `UserID`, `Role`, `ArrivalStatus`, `JoinedAt`) VALUES (?, ?, 'Driver', 'Reached', NOW()) ON DUPLICATE KEY UPDATE ArrivalStatus = 'Reached'")
+                ->execute([$rideId, $currentUserId]);
+
+            // Notify all joined passengers that ride has ended and to rate the driver
+            $pStmt = $pdo->prepare("SELECT UserID FROM `RideParticipant` WHERE `RideID` = ? AND `Role` = 'Passenger'");
+            $pStmt->execute([$rideId]);
+            $passengers = $pStmt->fetchAll(PDO::FETCH_COLUMN);
+
+            $driverName = $_SESSION['name'] ?? 'Your driver';
+            foreach ($passengers as $pUid) {
+                create_notification(
+                    $pdo,
+                    $pUid,
+                    'rate_prompt',
+                    'Ride Completed 🏁',
+                    "{$driverName} reached the destination and ended the ride ({$ride['StartLocation']} → {$ride['Destination']}). Please confirm arrival and rate your trip!",
+                    "ride_details.php?id=$rideId"
+                );
+            }
+
+            $pdo->commit();
+            $_SESSION['success_msg'] = "🏁 Ride ended successfully! It is now marked as Completed.";
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            $_SESSION['error_msg'] = "Failed to end ride: " . $e->getMessage();
+        }
+
+        $targetUrl = !empty($redirect) ? $redirect : "my_rides.php?tab=completed";
+        header("Location: $targetUrl");
+        exit;
+
+    // -------------------------------------------------------------------------
+    // 7C. MAKE PAYMENT (Passenger pays for ride)
+    // -------------------------------------------------------------------------
+    case 'make_payment':
+        $rideId = (int)($_POST['ride_id'] ?? 0);
+        $paymentMethod = trim($_POST['payment_method'] ?? 'bKash');
+        $redirect = trim($_POST['redirect'] ?? '');
+
+        // Fetch ride details
+        $rStmt = $pdo->prepare("SELECT * FROM `Ride` WHERE `RideID` = ?");
+        $rStmt->execute([$rideId]);
+        $ride = $rStmt->fetch();
+
+        if (!$ride) {
+            $_SESSION['error_msg'] = "Ride not found.";
+            header('Location: my_rides.php');
+            exit;
+        }
+
+        // Verify that current user is an accepted passenger
+        $pStmt = $pdo->prepare("SELECT * FROM `RideParticipant` WHERE `RideID` = ? AND `UserID` = ? AND `Role` = 'Passenger'");
+        $pStmt->execute([$rideId, $currentUserId]);
+        $participant = $pStmt->fetch();
+
+        if (!$participant) {
+            $_SESSION['error_msg'] = "You are not a registered passenger on this ride.";
+            header("Location: ride_details.php?id=$rideId");
+            exit;
+        }
+
+        $fareAmount = floatval($ride['SharedCost']);
+
+        $pdo->beginTransaction();
+        try {
+            // Update RideParticipant PaymentStatus
+            $upStmt = $pdo->prepare("
+                UPDATE `RideParticipant` 
+                SET `PaymentStatus` = 'Paid',
+                    `PaymentMethod` = ?,
+                    `PaidAmount` = ?,
+                    `PaidAt` = NOW()
+                WHERE `RideID` = ? AND `UserID` = ?
+            ");
+            $upStmt->execute([$paymentMethod, $fareAmount, $rideId, $currentUserId]);
+
+            // Notify the driver that passenger made payment
+            $passengerName = $_SESSION['name'] ?? 'A passenger';
+            create_notification(
+                $pdo,
+                $ride['DriverID'],
+                'payment_received',
+                'Payment Received ৳',
+                "{$passengerName} has paid ৳" . number_format($fareAmount, 0) . " ({$paymentMethod}) for your ride from {$ride['StartLocation']} to {$ride['Destination']}.",
+                "ride_details.php?id=$rideId"
+            );
+
+            $pdo->commit();
+            $_SESSION['success_msg'] = "💳 Payment of ৳" . number_format($fareAmount, 0) . " recorded successfully via {$paymentMethod}! The driver has been notified.";
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            $_SESSION['error_msg'] = "Failed to record payment: " . $e->getMessage();
+        }
+
+        $targetUrl = !empty($redirect) ? $redirect : "ride_details.php?id=$rideId";
+        header("Location: $targetUrl");
         exit;
 
     // -------------------------------------------------------------------------
@@ -655,13 +852,208 @@ switch ($action) {
         try {
             $pdo->prepare("DELETE FROM `LostItem` WHERE `ItemID` = ?")->execute([$itemId]);
             $_SESSION['success_msg'] = "Report removed successfully.";
-            header("Location: lost_found.php");
+            header("Location: " . (!empty($_POST['redirect']) ? $_POST['redirect'] : "lost_found.php"));
             exit;
         } catch (PDOException $e) {
             $_SESSION['error_msg'] = "Error deleting report: " . $e->getMessage();
             header("Location: lost_found.php");
             exit;
         }
+
+    // -------------------------------------------------------------------------
+    // 14. ADMIN: BAN USER
+    // -------------------------------------------------------------------------
+    case 'admin_ban_user':
+        $userRole = $_SESSION['user_type'] ?? 'Passenger';
+        if ($userRole !== 'Admin') {
+            $_SESSION['error_msg'] = "Unauthorized: Admin privileges required.";
+            header('Location: index.php');
+            exit;
+        }
+
+        $targetUserId = (int)($_POST['user_id'] ?? 0);
+        if ($targetUserId <= 0) {
+            $_SESSION['error_msg'] = "Invalid user ID.";
+            header('Location: admin.php?tab=users');
+            exit;
+        }
+
+        if ($targetUserId === $currentUserId) {
+            $_SESSION['error_msg'] = "You cannot ban your own administrator account.";
+            header('Location: admin.php?tab=users');
+            exit;
+        }
+
+        // Verify target is not an admin
+        $targetUser = $pdo->prepare("SELECT Name, UserType FROM `User` WHERE UserID = ?");
+        $targetUser->execute([$targetUserId]);
+        $target = $targetUser->fetch();
+
+        if (!$target) {
+            $_SESSION['error_msg'] = "User not found.";
+            header('Location: admin.php?tab=users');
+            exit;
+        }
+
+        if ($target['UserType'] === 'Admin') {
+            $_SESSION['error_msg'] = "Cannot ban an administrator.";
+            header('Location: admin.php?tab=users');
+            exit;
+        }
+
+        try {
+            $pdo->prepare("UPDATE `User` SET `IsBanned` = 1 WHERE `UserID` = ?")->execute([$targetUserId]);
+            create_notification($pdo, $targetUserId, 'admin_notice', 'Account Suspended', 'Your BRAC University Rideshare account has been suspended by an administrator.', 'login.php');
+            $_SESSION['success_msg'] = "User '{$target['Name']}' (#$targetUserId) has been banned.";
+        } catch (PDOException $e) {
+            $_SESSION['error_msg'] = "Failed to ban user: " . $e->getMessage();
+        }
+
+        header('Location: admin.php?tab=users');
+        exit;
+
+    // -------------------------------------------------------------------------
+    // 15. ADMIN: UNBAN USER
+    // -------------------------------------------------------------------------
+    case 'admin_unban_user':
+        $userRole = $_SESSION['user_type'] ?? 'Passenger';
+        if ($userRole !== 'Admin') {
+            $_SESSION['error_msg'] = "Unauthorized: Admin privileges required.";
+            header('Location: index.php');
+            exit;
+        }
+
+        $targetUserId = (int)($_POST['user_id'] ?? 0);
+        if ($targetUserId <= 0) {
+            $_SESSION['error_msg'] = "Invalid user ID.";
+            header('Location: admin.php?tab=users');
+            exit;
+        }
+
+        $targetUser = $pdo->prepare("SELECT Name FROM `User` WHERE UserID = ?");
+        $targetUser->execute([$targetUserId]);
+        $target = $targetUser->fetch();
+
+        try {
+            $pdo->prepare("UPDATE `User` SET `IsBanned` = 0 WHERE `UserID` = ?")->execute([$targetUserId]);
+            create_notification($pdo, $targetUserId, 'admin_notice', 'Account Restored', 'Your account suspension has been lifted by an administrator.', 'index.php');
+            $_SESSION['success_msg'] = "User '{$target['Name']}' (#$targetUserId) has been unbanned and restored.";
+        } catch (PDOException $e) {
+            $_SESSION['error_msg'] = "Failed to unban user: " . $e->getMessage();
+        }
+
+        header('Location: admin.php?tab=users');
+        exit;
+
+    // -------------------------------------------------------------------------
+    // 16. ADMIN: END RIDE
+    // -------------------------------------------------------------------------
+    case 'admin_end_ride':
+        $userRole = $_SESSION['user_type'] ?? 'Passenger';
+        if ($userRole !== 'Admin') {
+            $_SESSION['error_msg'] = "Unauthorized: Admin privileges required.";
+            header('Location: index.php');
+            exit;
+        }
+
+        $rideId = (int)($_POST['ride_id'] ?? 0);
+        $redirect = trim($_POST['redirect'] ?? 'admin.php?tab=rides');
+
+        $rStmt = $pdo->prepare("SELECT * FROM `Ride` WHERE `RideID` = ?");
+        $rStmt->execute([$rideId]);
+        $ride = $rStmt->fetch();
+
+        if (!$ride) {
+            $_SESSION['error_msg'] = "Ride not found.";
+            header("Location: $redirect");
+            exit;
+        }
+
+        try {
+            $pdo->prepare("UPDATE `Ride` SET `Status` = 'Completed' WHERE `RideID` = ?")->execute([$rideId]);
+
+            // Notify driver
+            create_notification($pdo, $ride['DriverID'], 'admin_notice', 'Ride Ended by Admin 🏁', "Your ride from {$ride['StartLocation']} to {$ride['Destination']} has been marked as Completed by platform administration.", "ride_details.php?id=$rideId");
+
+            // Notify all participants
+            $partStmt = $pdo->prepare("SELECT UserID FROM `RideParticipant` WHERE `RideID` = ? AND `Role` = 'Passenger'");
+            $partStmt->execute([$rideId]);
+            $passengers = $partStmt->fetchAll(PDO::FETCH_COLUMN);
+
+            foreach ($passengers as $pUid) {
+                create_notification($pdo, $pUid, 'rate_prompt', 'Ride Completed 🏁', "Your ride from {$ride['StartLocation']} to {$ride['Destination']} has ended. Please rate your driver.", "ride_details.php?id=$rideId");
+            }
+
+            $_SESSION['success_msg'] = "Ride #$rideId has been ended and marked as Completed.";
+        } catch (PDOException $e) {
+            $_SESSION['error_msg'] = "Failed to end ride: " . $e->getMessage();
+        }
+
+        header("Location: $redirect");
+        exit;
+
+    // -------------------------------------------------------------------------
+    // 17. ADMIN: DELETE RIDE
+    // -------------------------------------------------------------------------
+    case 'admin_delete_ride':
+        $userRole = $_SESSION['user_type'] ?? 'Passenger';
+        if ($userRole !== 'Admin') {
+            $_SESSION['error_msg'] = "Unauthorized: Admin privileges required.";
+            header('Location: index.php');
+            exit;
+        }
+
+        $rideId = (int)($_POST['ride_id'] ?? 0);
+
+        $rStmt = $pdo->prepare("SELECT * FROM `Ride` WHERE `RideID` = ?");
+        $rStmt->execute([$rideId]);
+        $ride = $rStmt->fetch();
+
+        if (!$ride) {
+            $_SESSION['error_msg'] = "Ride not found.";
+            header('Location: admin.php?tab=rides');
+            exit;
+        }
+
+        try {
+            $pdo->prepare("DELETE FROM `Ride` WHERE `RideID` = ?")->execute([$rideId]);
+            $_SESSION['success_msg'] = "Ride #$rideId ({$ride['StartLocation']} → {$ride['Destination']}) permanently deleted.";
+        } catch (PDOException $e) {
+            $_SESSION['error_msg'] = "Failed to delete ride: " . $e->getMessage();
+        }
+
+        header('Location: admin.php?tab=rides');
+        exit;
+
+    // -------------------------------------------------------------------------
+    // 18. ADMIN: DELETE LOST & FOUND SUBMISSION
+    // -------------------------------------------------------------------------
+    case 'admin_delete_lost_item':
+        $userRole = $_SESSION['user_type'] ?? 'Passenger';
+        $isAdmin = ($userRole === 'Admin');
+
+        $itemId = (int)($_POST['item_id'] ?? 0);
+        $redirect = trim($_POST['redirect'] ?? ($isAdmin ? 'admin.php?tab=lost_found' : 'lost_found.php'));
+
+        $itemStmt = $pdo->prepare("SELECT * FROM `LostItem` WHERE `ItemID` = ?");
+        $itemStmt->execute([$itemId]);
+        $item = $itemStmt->fetch();
+
+        if (!$item || ((int)$item['PosterID'] !== $currentUserId && !$isAdmin)) {
+            $_SESSION['error_msg'] = "Unauthorized to delete this lost & found report.";
+            header("Location: $redirect");
+            exit;
+        }
+
+        try {
+            $pdo->prepare("DELETE FROM `LostItem` WHERE `ItemID` = ?")->execute([$itemId]);
+            $_SESSION['success_msg'] = "Lost & Found submission for '{$item['ItemName']}' removed successfully.";
+        } catch (PDOException $e) {
+            $_SESSION['error_msg'] = "Failed to remove submission: " . $e->getMessage();
+        }
+
+        header("Location: $redirect");
+        exit;
 
     default:
         $_SESSION['error_msg'] = "Invalid action specified.";

@@ -110,25 +110,6 @@ if ($hasSearched) {
 }
 
 $dhakaLocs = get_dhaka_locations();
-
-// Optional Admin Query execution (preserved from existing code)
-$adminQueryResults = null;
-$adminQueryError = '';
-$adminExecutedQuery = '';
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['sql_query']) && $isLoggedIn && $currentUserRole === 'Admin') {
-    $customQuery = trim($_POST['sql_query']);
-    if (preg_match('/^\s*select\b/i', $customQuery)) {
-        try {
-            $qStmt = $pdo->query($customQuery);
-            $adminQueryResults = $qStmt->fetchAll(PDO::FETCH_ASSOC);
-            $adminExecutedQuery = $customQuery;
-        } catch (PDOException $e) {
-            $adminQueryError = $e->getMessage();
-        }
-    } else {
-        $adminQueryError = "Only SELECT queries are allowed.";
-    }
-}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -214,7 +195,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['sql_query']) && $isLo
                 <input type="hidden" id="search_start_lat" name="start_lat" value="<?= htmlspecialchars($searchStartLat ?? '') ?>">
                 <input type="hidden" id="search_start_lng" name="start_lng" value="<?= htmlspecialchars($searchStartLng ?? '') ?>">
 
-                <div class="search-form-grid" style="grid-template-columns: 1.5fr 1.5fr 1fr 1fr auto;">
+                <div class="search-form-grid">
                     
                     <!-- Destination Field (Primary) -->
                     <div class="search-input-group">
@@ -485,7 +466,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['sql_query']) && $isLo
                                 View Details
                             </a>
 
-                            <?php if ($isLoggedIn && (int)$ride['DriverID'] === (int)$currentUserId): ?>
+                            <?php if ($isLoggedIn && $currentUserRole === 'Admin'): ?>
+                                <span class="btn btn-secondary btn-sm" style="opacity: 0.8;" title="Admins can view and manage rides">
+                                    🛡️ Admin View
+                                </span>
+                            <?php elseif ($isLoggedIn && (int)$ride['DriverID'] === (int)$currentUserId): ?>
                                 <a href="ride_details.php?id=<?= $ride['RideID'] ?>" class="btn btn-accent btn-sm">
                                     Your Ride
                                 </a>
@@ -513,47 +498,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['sql_query']) && $isLo
                         </div>
                     </div>
                 <?php endforeach; ?>
-            </div>
-        <?php endif; ?>
-
-        <!-- Admin Live SQL Viewer (Preserved for Administrative diagnostics) -->
-        <?php if ($isLoggedIn && $currentUserRole === 'Admin'): ?>
-            <div class="card" style="margin-top: 2rem;">
-                <h2>🛠️ Admin Database Diagnostic Console</h2>
-                <?php if (!empty($adminQueryError)): ?>
-                    <div class="alert alert-danger"><?= htmlspecialchars($adminQueryError) ?></div>
-                <?php endif; ?>
-                <form method="POST">
-                    <div class="form-group">
-                        <textarea name="sql_query" class="form-control" rows="2" placeholder="SELECT * FROM `User` LIMIT 10"><?= htmlspecialchars($adminExecutedQuery) ?></textarea>
-                    </div>
-                    <button type="submit" class="btn btn-secondary btn-sm">Execute Diagnostic Query</button>
-                </form>
-
-                <?php if ($adminQueryResults !== null): ?>
-                    <div style="overflow-x: auto; margin-top: 1rem;">
-                        <table class="user-table">
-                            <thead>
-                                <tr>
-                                    <?php if (!empty($adminQueryResults)): ?>
-                                        <?php foreach (array_keys($adminQueryResults[0]) as $col): ?>
-                                            <th><?= htmlspecialchars($col) ?></th>
-                                        <?php endforeach; ?>
-                                    <?php endif; ?>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($adminQueryResults as $row): ?>
-                                    <tr>
-                                        <?php foreach ($row as $val): ?>
-                                            <td><?= htmlspecialchars($val ?? 'NULL') ?></td>
-                                        <?php endforeach; ?>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                <?php endif; ?>
             </div>
         <?php endif; ?>
 

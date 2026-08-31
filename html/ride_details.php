@@ -11,6 +11,8 @@ if ($rideId <= 0) {
 
 $currentUserId = $_SESSION['user_id'] ?? null;
 $isLoggedIn = isset($_SESSION['user_id']);
+$currentUserRole = $_SESSION['user_type'] ?? 'Passenger';
+$isAdmin = ($isLoggedIn && $currentUserRole === 'Admin');
 
 $msgSuccess = $_SESSION['success_msg'] ?? '';
 $msgError = $_SESSION['error_msg'] ?? '';
@@ -72,12 +74,25 @@ $pStmt->execute([$rideId]);
 $passengers = $pStmt->fetchAll();
 
 $isAcceptedPassenger = false;
+$myArrivalStatus = 'Pending';
+$myPaymentStatus = 'Unpaid';
+$myPaymentMethod = '';
+$myPaidAmount = 0.00;
 foreach ($passengers as $p) {
     if ($currentUserId && (int)$p['UserID'] === (int)$currentUserId) {
         $isAcceptedPassenger = true;
+        $myArrivalStatus = $p['ArrivalStatus'] ?? 'Pending';
+        $myPaymentStatus = $p['PaymentStatus'] ?? 'Unpaid';
+        $myPaymentMethod = $p['PaymentMethod'] ?? '';
+        $myPaidAmount = floatval($p['PaidAmount'] ?? 0.00);
         break;
     }
 }
+
+$driverArrivalStatus = 'Pending';
+$dArrStmt = $pdo->prepare("SELECT ArrivalStatus FROM `RideParticipant` WHERE RideID = ? AND UserID = ?");
+$dArrStmt->execute([$rideId, $ride['DriverID']]);
+$driverArrivalStatus = $dArrStmt->fetchColumn() ?: 'Pending';
 
 // Fetch Pending Request status for current user
 $hasPendingRequest = false;
@@ -330,7 +345,7 @@ $destLng = $ride['DestinationLongitude'] ?? 90.4265;
                     <?php else: ?>
                         <div style="margin-bottom: 1.5rem;">
                             <?php foreach ($passengers as $p): ?>
-                                <div class="passenger-item">
+                                <div class="passenger-item" style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 0; border-bottom: 1px solid var(--border-color);">
                                     <div style="display: flex; align-items: center; gap: 0.6rem;">
                                         <div class="nav-avatar"><?= strtoupper(substr($p['Name'], 0, 1)) ?></div>
                                         <div>
@@ -338,11 +353,26 @@ $destLng = $ride['DestinationLongitude'] ?? 90.4265;
                                                 <?= htmlspecialchars($p['Name']) ?>
                                             </a>
                                             <?= render_verification_badge($p['UniversityVerified']) ?>
+                                            
+                                            <!-- Payment Status Indicator -->
+                                            <div style="margin-top: 4px;">
+                                                <?php if (($p['PaymentStatus'] ?? 'Unpaid') === 'Paid'): ?>
+                                                    <span style="display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; font-weight: 700; color: #15803d; background: #ecfdf5; border: 1px solid #a7f3d0; padding: 0.15rem 0.5rem; border-radius: 9999px;">
+                                                        💳 Paid by <?= htmlspecialchars($p['Name']) ?> (৳<?= number_format(floatval($p['PaidAmount'] ?: $ride['SharedCost']), 0) ?><?= !empty($p['PaymentMethod']) ? ' via ' . htmlspecialchars($p['PaymentMethod']) : '' ?>)
+                                                    </span>
+                                                <?php else: ?>
+                                                    <span style="display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; font-weight: 600; color: #92400e; background: #fef3c7; border: 1px solid #fde68a; padding: 0.15rem 0.5rem; border-radius: 9999px;">
+                                                        ⏳ Unpaid (৳<?= number_format(floatval($ride['SharedCost']), 0) ?>)
+                                                    </span>
+                                                <?php endif; ?>
+                                            </div>
                                         </div>
                                     </div>
-                                    <span style="font-size: 0.8rem; color: var(--text-muted);">
-                                        Arrival: <strong><?= htmlspecialchars($p['ArrivalStatus']) ?></strong>
-                                    </span>
+                                    <div style="text-align: right;">
+                                        <span style="font-size: 0.8rem; color: var(--text-muted); display: block;">
+                                            Arrival: <strong><?= htmlspecialchars($p['ArrivalStatus']) ?></strong>
+                                        </span>
+                                    </div>
                                 </div>
                             <?php endforeach; ?>
                         </div>
@@ -373,23 +403,131 @@ $destLng = $ride['DestinationLongitude'] ?? 90.4265;
 
                         <?php if (!$isLoggedIn): ?>
                             <a href="login.php" class="btn btn-primary">Log In to Join Ride</a>
-                        <?php elseif ($isDriver): ?>
-                            <div style="display: flex; gap: 0.5rem;">
-                                <a href="my_rides.php" class="btn btn-secondary" style="flex: 1;">Manage Requests</a>
-                                <?php if ($ride['Status'] !== 'Cancelled' && $ride['Status'] !== 'Completed'): ?>
-                                    <form method="POST" action="api_actions.php" onsubmit="return confirm('Are you sure you want to cancel this ride?');">
-                                        <input type="hidden" name="action" value="cancel_ride">
+                        <?php elseif ($isAdmin): ?>
+                            <div style="background: #eff6ff; border: 1.5px solid #bfdbfe; border-radius: 8px; padding: 1rem; margin-bottom: 0.75rem;">
+                                <div style="font-weight: 700; color: #1e40af; font-size: 0.95rem; margin-bottom: 0.35rem; display: flex; align-items: center; gap: 0.4rem;">
+                                    <span>🛡️</span> Administrative Controls
+                                </div>
+                                <p style="font-size: 0.82rem; color: #3b82f6; margin-bottom: 0.85rem; line-height: 1.4;">
+                                    As an administrator, you cannot join or offer rides, but you can moderate, end, or delete this ride.
+                                </p>
+                                <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+                                    <?php if ($ride['Status'] !== 'Completed' && $ride['Status'] !== 'Cancelled'): ?>
+                                        <form method="POST" action="api_actions.php" onsubmit="return confirm('End this ride immediately and mark it as Completed?');">
+                                            <input type="hidden" name="action" value="admin_end_ride">
+                                            <input type="hidden" name="ride_id" value="<?= $ride['RideID'] ?>">
+                                            <input type="hidden" name="redirect" value="ride_details.php?id=<?= $ride['RideID'] ?>">
+                                            <button type="submit" class="btn btn-warning" style="width: 100%;">🏁 End Ride (Admin)</button>
+                                        </form>
+                                    <?php endif; ?>
+                                    <form method="POST" action="api_actions.php" onsubmit="return confirm('Permanently delete this ride and all associated data? This action cannot be undone.');">
+                                        <input type="hidden" name="action" value="admin_delete_ride">
                                         <input type="hidden" name="ride_id" value="<?= $ride['RideID'] ?>">
-                                        <button type="submit" class="btn btn-danger">Cancel Ride</button>
+                                        <button type="submit" class="btn btn-danger" style="width: 100%;">🗑️ Delete Ride (Admin)</button>
+                                    </form>
+                                    <a href="admin.php?tab=rides" class="btn btn-secondary" style="font-size: 0.85rem; text-align: center;">Go to Admin Dashboard</a>
+                                </div>
+                            </div>
+                        <?php elseif ($isDriver): ?>
+                            <div style="display: flex; flex-direction: column; gap: 0.6rem;">
+                                <?php if ($ride['Status'] !== 'Cancelled' && $ride['Status'] !== 'Completed'): ?>
+                                    <form method="POST" action="api_actions.php" onsubmit="return confirm('🏁 Have you reached the destination? This will mark the ride as Completed and prompt all passengers to rate the commute.');" style="margin: 0;">
+                                        <input type="hidden" name="action" value="driver_end_ride">
+                                        <input type="hidden" name="ride_id" value="<?= $ride['RideID'] ?>">
+                                        <input type="hidden" name="redirect" value="ride_details.php?id=<?= $ride['RideID'] ?>">
+                                        <button type="submit" class="btn btn-success" style="width: 100%; padding: 0.75rem; font-weight: 800; background: #15803d; border-color: #15803d;">
+                                            🏁 End Ride (Mark as Reached)
+                                        </button>
+                                    </form>
+
+                                    <div style="display: flex; gap: 0.5rem;">
+                                        <a href="edit_ride.php?id=<?= $ride['RideID'] ?>" class="btn btn-primary" style="flex: 1; text-align: center;">
+                                            ✏️ Edit Ride
+                                        </a>
+                                        <form method="POST" action="api_actions.php" onsubmit="return confirm('Are you sure you want to cancel this ride? All joined passengers will be notified.');" style="margin: 0;">
+                                            <input type="hidden" name="action" value="cancel_ride">
+                                            <input type="hidden" name="ride_id" value="<?= $ride['RideID'] ?>">
+                                            <button type="submit" class="btn btn-danger">Cancel</button>
+                                        </form>
+                                    </div>
+                                <?php else: ?>
+                                    <div style="background: #f0fdf4; border: 1.5px solid #bbf7d0; border-radius: 8px; padding: 0.75rem; text-align: center; color: #166534; font-weight: 700; font-size: 0.9rem;">
+                                        🏁 Destination Reached · Ride Completed
+                                    </div>
+                                <?php endif; ?>
+                                <a href="my_rides.php" class="btn btn-secondary" style="width: 100%; text-align: center;">Manage Requests & Passengers</a>
+                            </div>
+                        <?php elseif ($isAcceptedPassenger): ?>
+                            <div style="display: flex; flex-direction: column; gap: 0.6rem;">
+                                
+                                <!-- Passenger Payment Box -->
+                                <?php if (floatval($ride['SharedCost']) > 0): ?>
+                                    <div style="background: <?= $myPaymentStatus === 'Paid' ? '#ecfdf5' : '#eff6ff' ?>; border: 1.5px solid <?= $myPaymentStatus === 'Paid' ? '#a7f3d0' : '#bfdbfe' ?>; border-radius: 8px; padding: 0.85rem 1rem;">
+                                        <?php if ($myPaymentStatus === 'Paid'): ?>
+                                            <div style="display: flex; align-items: center; justify-content: space-between;">
+                                                <div>
+                                                    <strong style="color: #15803d; font-size: 0.92rem;">✅ Fare Paid Successfully</strong>
+                                                    <p style="font-size: 0.8rem; color: #166534; margin: 0.15rem 0 0 0;">
+                                                        You paid <strong>৳<?= number_format($myPaidAmount ?: $ride['SharedCost'], 0) ?></strong> via <?= htmlspecialchars($myPaymentMethod ?: 'bKash') ?>. The driver can see your payment.
+                                                    </p>
+                                                </div>
+                                                <span style="font-size: 1.3rem;">💳</span>
+                                            </div>
+                                        <?php else: ?>
+                                            <div style="margin-bottom: 0.6rem;">
+                                                <strong style="color: #1e40af; font-size: 0.92rem;">💳 Pay Shared Fare (৳<?= number_format($ride['SharedCost'], 0) ?>)</strong>
+                                                <p style="font-size: 0.8rem; color: #2563eb; margin: 0.15rem 0 0 0;">
+                                                    Select your payment method to pay the driver:
+                                                </p>
+                                            </div>
+                                            <form method="POST" action="api_actions.php" style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                                                <input type="hidden" name="action" value="make_payment">
+                                                <input type="hidden" name="ride_id" value="<?= $ride['RideID'] ?>">
+                                                <input type="hidden" name="redirect" value="ride_details.php?id=<?= $ride['RideID'] ?>">
+                                                
+                                                <select name="payment_method" class="form-control" style="flex: 1; min-width: 110px; padding: 0.45rem 0.65rem; font-size: 0.85rem;">
+                                                    <option value="bKash">bKash</option>
+                                                    <option value="Nagad">Nagad</option>
+                                                    <option value="Rocket">Rocket</option>
+                                                    <option value="Cash">Cash to Driver</option>
+                                                </select>
+                                                <button type="submit" class="btn btn-primary" style="padding: 0.45rem 1rem; font-weight: 700; font-size: 0.88rem;">
+                                                    💳 Pay Now
+                                                </button>
+                                            </form>
+                                        <?php endif; ?>
+                                    </div>
+                                <?php endif; ?>
+
+                                <?php if ($myArrivalStatus !== 'Reached' && $ride['Status'] !== 'Cancelled'): ?>
+                                    <div style="background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px; padding: 1rem; text-align: center;">
+                                        <p style="font-size: 0.88rem; color: #166534; font-weight: 700; margin-bottom: 0.6rem;">
+                                            📍 Have you arrived at your destination?
+                                        </p>
+                                        <form method="POST" action="api_actions.php" style="margin-bottom: 0.5rem;">
+                                            <input type="hidden" name="action" value="confirm_arrival">
+                                            <input type="hidden" name="ride_id" value="<?= $ride['RideID'] ?>">
+                                            <input type="hidden" name="arrival_status" value="Reached">
+                                            <input type="hidden" name="redirect" value="ride_details.php?id=<?= $ride['RideID'] ?>">
+                                            <button type="submit" class="btn btn-success" style="width: 100%; padding: 0.7rem; font-weight: 800; background: #16a34a; border-color: #16a34a;">
+                                                ✅ Yes, Mark as Reached
+                                            </button>
+                                        </form>
+                                    </div>
+                                <?php elseif ($myArrivalStatus === 'Reached'): ?>
+                                    <div style="background: #f0fdf4; border: 1.5px solid #bbf7d0; border-radius: 8px; padding: 0.75rem; text-align: center; color: #166534; font-weight: 700; font-size: 0.9rem;">
+                                        ✅ You have confirmed arrival at destination
+                                    </div>
+                                <?php endif; ?>
+
+                                <?php if ($ride['Status'] !== 'Completed' && $ride['Status'] !== 'Cancelled' && $myArrivalStatus !== 'Reached'): ?>
+                                    <form method="POST" action="api_actions.php" onsubmit="return confirm('Are you sure you want to leave this ride?');">
+                                        <input type="hidden" name="action" value="leave_ride">
+                                        <input type="hidden" name="ride_id" value="<?= $ride['RideID'] ?>">
+                                        <button type="submit" class="btn btn-danger" style="width: 100%;">Leave Ride</button>
                                     </form>
                                 <?php endif; ?>
                             </div>
-                        <?php elseif ($isAcceptedPassenger): ?>
-                            <form method="POST" action="api_actions.php" onsubmit="return confirm('Are you sure you want to leave this ride?');">
-                                <input type="hidden" name="action" value="leave_ride">
-                                <input type="hidden" name="ride_id" value="<?= $ride['RideID'] ?>">
-                                <button type="submit" class="btn btn-danger">Leave Ride</button>
-                            </form>
                         <?php elseif ($hasPendingRequest): ?>
                             <form method="POST" action="api_actions.php">
                                 <input type="hidden" name="action" value="cancel_request">

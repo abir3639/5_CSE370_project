@@ -12,6 +12,12 @@ if (!isset($_SESSION['user_id'])) {
 $currentUserId = (int)$_SESSION['user_id'];
 $userRole = $_SESSION['user_type'] ?? 'Passenger';
 
+if ($userRole === 'Admin') {
+    $_SESSION['error_msg'] = "🛡️ Administrator accounts cannot offer rides. Please switch to a driver account to post rides.";
+    header('Location: admin.php');
+    exit;
+}
+
 $error = '';
 $startLocation = $_POST['start_location'] ?? 'Mirpur 10';
 $startLat = $_POST['start_lat'] ?? '23.8069';
@@ -150,17 +156,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_ride'])) {
             flex-wrap: wrap;
         }
         .route-preset-btn {
-            flex: 1;
-            min-width: 140px;
-            padding: 0.6rem;
+            flex: 1 1 calc(33.333% - 0.5rem);
+            min-width: 110px;
+            padding: 0.6rem 0.5rem;
             background: #f8fafc;
             border: 1px solid var(--border-color);
             border-radius: 8px;
-            font-size: 0.85rem;
+            font-size: 0.82rem;
             font-weight: 600;
             cursor: pointer;
             text-align: center;
             transition: all 0.15s ease;
+        }
+        @media (max-width: 600px) {
+            .route-preset-btn {
+                flex: 1 1 calc(50% - 0.5rem);
+            }
+        }
+        @media (max-width: 400px) {
+            .route-preset-btn {
+                flex: 1 1 100%;
+            }
         }
         .route-preset-btn:hover {
             background: #e2e8f0;
@@ -221,7 +237,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_ride'])) {
                     <input type="hidden" id="dest_lng" name="dest_lng" value="<?= htmlspecialchars($destLng) ?>">
 
                     <!-- Uber-Style Location Inputs -->
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.25rem;">
+                    <div class="form-row-2col" style="margin-bottom: 1.25rem;">
                         <div>
                             <label style="display: block; margin-bottom: 0.45rem; font-weight: 700; font-size: 0.85rem; color: #334155;">
                                 Starting Location (Pickup) *
@@ -251,7 +267,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_ride'])) {
                         </div>
                     </div>
 
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div class="form-row-2col">
                         <div class="form-group">
                             <label>Ride Date *</label>
                             <input type="date" name="ride_date" class="form-control" value="<?= htmlspecialchars($rideDate) ?>" min="<?= date('Y-m-d') ?>" required>
@@ -262,7 +278,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_ride'])) {
                         </div>
                     </div>
 
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div class="form-row-2col">
                         <div class="form-group">
                             <label>Available Seats *</label>
                             <select name="available_seats" class="form-control" required>
@@ -295,7 +311,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_ride'])) {
                         </label>
                     </div>
 
-                    <button type="submit" class="btn btn-primary" style="font-size: 1.05rem; padding: 1rem; font-weight: 800;">
+                    <button type="submit" class="btn btn-primary" style="width: 100%; font-size: 1.05rem; padding: 1rem; font-weight: 800;">
                         Publish Ride Offer 🚀
                     </button>
                 </form>
