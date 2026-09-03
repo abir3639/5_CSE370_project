@@ -19,9 +19,9 @@ unset($_SESSION['success_msg'], $_SESSION['error_msg']);
 
 $activeTab = $_GET['tab'] ?? 'overview';
 
-// =============================================================================
+
 // PLATFORM STATISTICS & METRICS
-// =============================================================================
+
 try {
     $totalUsers = (int)$pdo->query("SELECT COUNT(*) FROM `User`")->fetchColumn();
     $totalVerified = (int)$pdo->query("SELECT COUNT(*) FROM `User` WHERE UniversityVerified = 1")->fetchColumn();
