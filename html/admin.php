@@ -45,9 +45,9 @@ try {
     die("Admin DB Error: " . htmlspecialchars($e->getMessage()));
 }
 
-// =============================================================================
+
 // TAB 2: USER MANAGEMENT DATA
-// =============================================================================
+
 $userSearch = trim($_GET['user_q'] ?? '');
 $userRoleFilter = trim($_GET['user_role'] ?? '');
 $userStatusFilter = trim($_GET['user_status'] ?? '');
@@ -88,9 +88,9 @@ $userStmt = $pdo->prepare("
 $userStmt->execute($userParams);
 $allUsersList = $userStmt->fetchAll(PDO::FETCH_ASSOC);
 
-// =============================================================================
+
 // TAB 3: RIDE MANAGEMENT DATA
-// =============================================================================
+
 $rideSearch = trim($_GET['ride_q'] ?? '');
 $rideStatusFilter = trim($_GET['ride_status'] ?? '');
 
@@ -124,9 +124,9 @@ $rideStmt = $pdo->prepare("
 $rideStmt->execute($rideParams);
 $allRidesList = $rideStmt->fetchAll(PDO::FETCH_ASSOC);
 
-// =============================================================================
+
 // TAB 4: LOST & FOUND DATA
-// =============================================================================
+
 $lfSearch = trim($_GET['lf_q'] ?? '');
 $lfTypeFilter = trim($_GET['lf_type'] ?? '');
 $lfStatusFilter = trim($_GET['lf_status'] ?? '');
@@ -388,9 +388,7 @@ $allLostFoundList = $lfStmt->fetchAll(PDO::FETCH_ASSOC);
             </a>
         </div>
 
-        <!-- ===================================================================
-             TAB 1: OVERVIEW & STATS
-             =================================================================== -->
+        <!-- TAB 1: OVERVIEW & STATS -->
         <?php if ($activeTab === 'overview'): ?>
             <div class="admin-stats-grid">
                 <div class="admin-stat-card">
@@ -460,9 +458,9 @@ $allLostFoundList = $lfStmt->fetchAll(PDO::FETCH_ASSOC);
                 </div>
             </div>
 
-        <!-- ===================================================================
+        <!--
              TAB 2: USER MANAGEMENT & BANS
-             =================================================================== -->
+             -->
         <?php elseif ($activeTab === 'users'): ?>
             <div class="card">
                 <div class="section-header">
@@ -587,9 +585,9 @@ $allLostFoundList = $lfStmt->fetchAll(PDO::FETCH_ASSOC);
                 </div>
             </div>
 
-        <!-- ===================================================================
+        <!-- 
              TAB 3: RIDE MANAGEMENT (END & DELETE RIDES)
-             =================================================================== -->
+            -->
         <?php elseif ($activeTab === 'rides'): ?>
             <div class="card">
                 <div class="section-header">
@@ -713,9 +711,9 @@ $allLostFoundList = $lfStmt->fetchAll(PDO::FETCH_ASSOC);
                 </div>
             </div>
 
-        <!-- ===================================================================
+        <!--
              TAB 4: LOST & FOUND MODERATION
-             =================================================================== -->
+            -->
         <?php elseif ($activeTab === 'lost_found'): ?>
             <div class="card">
                 <div class="section-header">
