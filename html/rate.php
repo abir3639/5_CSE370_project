@@ -28,7 +28,7 @@ if (!$ride || $ride['Status'] !== 'Completed') {
     exit;
 }
 
-// Verify Current User was a Participant
+// Checking whether the current user is a participant
 $chk = $pdo->prepare("SELECT Role FROM `RideParticipant` WHERE `RideID` = ? AND `UserID` = ?");
 $chk->execute([$rideId, $currentUserId]);
 $myParticipant = $chk->fetch();
